@@ -107,12 +107,12 @@ Use a per-socket send lock (or one sender per subscriber) if two publishers can 
 ## 6. Clients
 
 ### Publisher
-`python3 publisher.py --broker 10.0.0.3 --topic alerts --count 10 --interval 0.5 --payload "text"`
-Picks the port from the topic (alerts -> 5001, else 5002), connects, sends `count` PUBLISH messages, prints each ACK, exits.
+`python3 clients/publisher.py <broker_ip> <topic> [port]`, for example `python3 clients/publisher.py 10.0.0.3 alerts`
+Picks the port from the topic if none is given (alerts -> 5001, else 5002), connects, then reads lines from standard input and sends each non-empty line as a PUBLISH message with a timestamp. ACK and ERROR replies from the broker are printed as they arrive. Ctrl+C or end of input closes the connection. The helper `tests/pub.sh <topic> "<message>" [port]` sends one message from inside Mininet.
 
 ### Subscriber
-`python3 subscriber.py --broker 10.0.0.3 --topics alerts,sports`
-Opens a connection per port needed, sends SUBSCRIBE for each topic, then prints every DELIVER line with a receive timestamp until Ctrl+C. Optional `--log file.csv` to record receive times (used in D2).
+`python3 clients/subscriber.py <broker_ip> <topic> [port]`, for example `python3 clients/subscriber.py 10.0.0.3 alerts`
+Subscribes to one topic per process (the port is chosen from the topic if not given). It prints the broker's ACK, then every DELIVER message as `[topic] payload (latency ms)`, where latency is the receive time minus the publisher's timestamp. To follow several topics, run one subscriber per topic. Runs until Ctrl+C.
 
 ## 7. SDN controller (Ryu, OpenFlow 1.3)
 
@@ -131,7 +131,8 @@ The controller runs at `127.0.0.1:6653`.
 | table-miss | (all) | 0 | send to controller |
 
    Return traffic (broker to subscriber) has `tcp_src` equal to 5001/5002, so both directions must be matched.
-4. **Logging.** Print a line each time a flow is classified, e.g. `CLASS=HIGH alerts tcp_dst=5001 10.0.0.1 -> 10.0.0.3`. This is visible evidence for the demo.
+4. **Proactive installation.** The class rules are installed as soon as the controller learns a host's MAC address and port (on that host's first packet, for example ARP or ping), not when the first TCP packet arrives. This is needed because the generic priority-1 L2 rules would otherwise match TCP packets first and the controller would never see them.
+   **Logging.** Every 5 seconds the controller reads the flow counters from the switch and logs one line per class rule whose counter increased, e.g. `CLASS=HIGH tcp_dst=5001 -> 00:00:00:00:00:01 packets=38 (+6)`. This is visible evidence for the demo and the base for traffic monitoring in D2.
 5. Flows must be visible with `sudo ovs-ofctl -O OpenFlow13 dump-flows s1`, and the packet counters on the 5001/5002 rules must increase while traffic flows.
 
 ### D2 preview (not needed now)
@@ -142,10 +143,10 @@ The controller runs at `127.0.0.1:6653`.
 ## 8. End-to-end message flow (one message)
 
 1. `sub1` connects to broker:5001 and sends `SUBSCRIBE alerts`.
-2. The first packets of this TCP connection reach `s1`, which has no matching rule, so it sends a packet-in to Ryu.
-3. Ryu sees `tcp_dst=5001`, logs `CLASS=HIGH`, installs a priority-100 flow, and tells the switch to forward the packet.
+2. Earlier, when each host first sent traffic (ARP, ping), `s1` sent a packet-in to Ryu and Ryu learned that host's MAC and port. At that moment Ryu installed the class rules towards that host: priority 100 for TCP port 5001 and priority 50 for 5002, in both directions (`tcp_dst` and `tcp_src`).
+3. The connection's packets therefore match the priority-100 rule for port 5001 directly in the switch and are forwarded without asking the controller. The controller's monitor reads these counters every 5 seconds and logs `CLASS=HIGH tcp_dst=5001 ... packets=N`.
 4. The broker records `sub1`'s socket under topic `alerts` and replies with ACK.
-5. `pub1` connects to broker:5001 and sends `PUBLISH alerts`. The same classification happens for this flow.
+5. `pub1` connects to broker:5001 and sends `PUBLISH alerts`. The same priority-100 rule applies to this flow.
 6. The broker looks up subscribers of `alerts`, sends `DELIVER` to each, and sends ACK (`delivered=1`) to `pub1`.
 7. `sub1` prints the message. The switch forwarded all of this using flow rules the controller installed.
 
@@ -170,7 +171,7 @@ Record expected vs actual in `tests/test_cases.md`.
 1. `sudo mn -c` (cleanup; this kills any running Ryu, so do it first)
 2. Terminal 1: `source ~/ryu-env/bin/activate && ryu-manager controller/app.py`
 3. Terminal 2: `sudo python3 topology/topo.py`
-4. In the Mininet CLI: `broker python3 broker/broker.py &`, then start subscribers, then publishers (details added to the README once the topology script exists).
+4. In the Mininet CLI: `broker python3 broker/broker.py &`, then start subscribers, then publishers (exact commands are in README.md).
 5. Terminal 3: `sudo ovs-ofctl -O OpenFlow13 dump-flows s1`
 
 ## 11. Ownership for D1

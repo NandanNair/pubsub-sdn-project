@@ -1,0 +1,29 @@
+Connected to 10.0.0.3:5001. Type messages for 'alerts', Ctrl+C to quit.
+<- {"type": "ACK", "ref": "PUBLISH", "topic": "alerts", "delivered": 1}
+Connected to 10.0.0.3:5001. Type messages for 'alerts', Ctrl+C to quit.
+<- {"type": "ACK", "ref": "PUBLISH", "topic": "alerts", "delivered": 2}
+Connected to 10.0.0.3:5002. Type messages for 'alerts', Ctrl+C to quit.
+<- {"type": "ERROR", "msg": "wrong port for topic alerts, use 5001"}
+Connected to 10.0.0.3:5001. Type messages for 'alerts', Ctrl+C to quit.
+<- {"type": "ACK", "ref": "PUBLISH", "topic": "alerts", "delivered": 1}
+b'{"type": "ERROR", "msg": "malformed JSON"}\n'
+ cookie=0x0, duration=1099.364s, table=0, n_packets=38, n_bytes=2931, priority=100,tcp,dl_dst=00:00:00:00:00:01,tp_dst=5001 actions=output:3
+ cookie=0x0, duration=1099.362s, table=0, n_packets=10, n_bytes=807, priority=50,tcp,dl_dst=00:00:00:00:00:01,tp_dst=5002 actions=output:3
+ cookie=0x0, duration=1099.321s, table=0, n_packets=0, n_bytes=0, priority=100,tcp,dl_dst=00:00:00:00:00:02,tp_dst=5001 actions=output:1
+ cookie=0x0, duration=1099.321s, table=0, n_packets=0, n_bytes=0, priority=50,tcp,dl_dst=00:00:00:00:00:02,tp_dst=5002 actions=output:1
+ cookie=0x0, duration=1099.191s, table=0, n_packets=0, n_bytes=0, priority=100,tcp,dl_dst=00:00:00:00:00:03,tp_dst=5001 actions=output:2
+ cookie=0x0, duration=1099.191s, table=0, n_packets=0, n_bytes=0, priority=50,tcp,dl_dst=00:00:00:00:00:03,tp_dst=5002 actions=output:2
+ cookie=0x0, duration=1098.650s, table=0, n_packets=0, n_bytes=0, priority=100,tcp,dl_dst=00:00:00:00:00:04,tp_dst=5001 actions=output:4
+ cookie=0x0, duration=1098.650s, table=0, n_packets=0, n_bytes=0, priority=50,tcp,dl_dst=00:00:00:00:00:04,tp_dst=5002 actions=output:4
+ cookie=0x0, duration=1098.553s, table=0, n_packets=0, n_bytes=0, priority=100,tcp,dl_dst=00:00:00:00:00:05,tp_dst=5001 actions=output:5
+ cookie=0x0, duration=1098.553s, table=0, n_packets=0, n_bytes=0, priority=50,tcp,dl_dst=00:00:00:00:00:05,tp_dst=5002 actions=output:5
+ cookie=0x0, duration=1099.362s, table=0, n_packets=0, n_bytes=0, priority=100,tcp,dl_dst=00:00:00:00:00:01,tp_src=5001 actions=output:3
+ cookie=0x0, duration=1099.362s, table=0, n_packets=0, n_bytes=0, priority=50,tcp,dl_dst=00:00:00:00:00:01,tp_src=5002 actions=output:3
+ cookie=0x0, duration=1099.321s, table=0, n_packets=16, n_bytes=1338, priority=100,tcp,dl_dst=00:00:00:00:00:02,tp_src=5001 actions=output:1
+ cookie=0x0, duration=1099.321s, table=0, n_packets=4, n_bytes=338, priority=50,tcp,dl_dst=00:00:00:00:00:02,tp_src=5002 actions=output:1
+ cookie=0x0, duration=1099.191s, table=0, n_packets=0, n_bytes=0, priority=100,tcp,dl_dst=00:00:00:00:00:03,tp_src=5001 actions=output:2
+ cookie=0x0, duration=1099.191s, table=0, n_packets=0, n_bytes=0, priority=50,tcp,dl_dst=00:00:00:00:00:03,tp_src=5002 actions=output:2
+ cookie=0x0, duration=1098.650s, table=0, n_packets=6, n_bytes=743, priority=100,tcp,dl_dst=00:00:00:00:00:04,tp_src=5001 actions=output:4
+ cookie=0x0, duration=1098.650s, table=0, n_packets=0, n_bytes=0, priority=50,tcp,dl_dst=00:00:00:00:00:04,tp_src=5002 actions=output:4
+ cookie=0x0, duration=1098.553s, table=0, n_packets=5, n_bytes=484, priority=100,tcp,dl_dst=00:00:00:00:00:05,tp_src=5001 actions=output:5
+ cookie=0x0, duration=1098.553s, table=0, n_packets=3, n_bytes=261, priority=50,tcp,dl_dst=00:00:00:00:00:05,tp_src=5002 actions=output:5
