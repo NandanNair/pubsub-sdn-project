@@ -72,8 +72,8 @@ def run(auto):
 
     info("\n*** Useful commands inside the CLI:\n")
     info("    broker python3 broker/broker.py &         (start broker manually)\n")
-    info("    sub1 python3 clients/subscriber.py --broker 10.0.0.3 --topics alerts\n")
-    info("    pub1 python3 clients/publisher.py --broker 10.0.0.3 --topic alerts --count 5\n")
+    info("    sub1 python3 clients/subscriber.py 10.0.0.3 alerts > results/sub1.log 2>&1 &\n")
+    info("    pub1 sh tests/pub.sh alerts \"hello\"        (publish one message)\n")
     info("    xterm sub1 pub1                            (open terminals on hosts)\n")
     info("    sh ovs-ofctl -O OpenFlow13 dump-flows s1   (show flow rules)\n\n")
 
