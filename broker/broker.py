@@ -1,81 +1,80 @@
-import socket, threading, json, time
+import socket
+import threading
+import json
+from datetime import datetime
 
-HOST = "0.0.0.0"
-PORTS = (5001, 5002)
+# Helper function for timestamped logging
+def log_event(message):
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
 
-topics = {}
-lock = threading.Lock()
-send_locks = {}
+HOST = '0.0.0.0'
+PORTS = [5001, 5002]
 
-def port_for(topic):
-    return 5001 if topic == "alerts" else 5002
+# Structure: { topic: [socket1, socket2, ...] }
+subscriptions = {}
+sub_lock = threading.Lock()
 
-def send(conn, msg):
-    l = send_locks.get(conn)
-    if l is None:
-        raise OSError("closed")
-    with l:
-        conn.sendall((json.dumps(msg) + "\n").encode())
-
-def safe_send(conn, msg):
+def handle_client(conn, addr, port):
+    log_event(f"Connected: {addr}")
     try:
-        send(conn, msg)
-        return True
-    except OSError:
-        return False
-
-def error(conn, text):
-    safe_send(conn, {"type": "ERROR", "msg": text})
-
-def process(conn, port, msg):
-    t = msg.get("type")
-    if t not in ("SUBSCRIBE", "UNSUBSCRIBE", "PUBLISH"):
-        return error(conn, "unknown type")
-    topic = msg.get("topic")
-    if not isinstance(topic, str) or not topic:
-        return error(conn, "missing topic")
-    if t == "PUBLISH" and "payload" not in msg:
-        return error(conn, "missing payload")
-    if port_for(topic) != port:
-        return error(conn, f"wrong port for topic {topic}, use {port_for(topic)}")
-
-    if t == "SUBSCRIBE":
-        with lock:
-            topics.setdefault(topic, set()).add(conn)
-        safe_send(conn, {"type": "ACK", "ref": "SUBSCRIBE", "topic": topic})
-    elif t == "UNSUBSCRIBE":
-        with lock:
-            topics.get(topic, set()).discard(conn)
-        safe_send(conn, {"type": "ACK", "ref": "UNSUBSCRIBE", "topic": topic})
-    else:
-        with lock:
-            targets = list(topics.get(topic, set()))
-        out = {"type": "DELIVER", "topic": topic, "payload": msg["payload"],
-               "ts": msg.get("ts", time.time())}
-        delivered = sum(1 for s in targets if safe_send(s, out))
-        safe_send(conn, {"type": "ACK", "ref": "PUBLISH", "topic": topic,
-                         "delivered": delivered})
-
-def handle(conn, port):
-    send_locks[conn] = threading.Lock()
-    f = conn.makefile("rb")
-    try:
-        for raw in f:
+        while True:
+            data = conn.recv(1024)
+            if not data:
+                break
+            
             try:
-                msg = json.loads(raw.decode("utf-8"))
-                if not isinstance(msg, dict):
-                    raise ValueError
-            except ValueError:
-                error(conn, "malformed JSON")
+                msg = json.loads(data.decode('utf-8'))
+            except Exception:
+                err_resp = json.dumps({"type": "ERROR", "reason": "Malformed JSON"})
+                conn.sendall(err_resp.encode('utf-8'))
                 continue
-            process(conn, port, msg)
-    except OSError:
+
+            msg_type = msg.get("type")
+            topic = msg.get("topic", "")
+            client_id = msg.get("client_id", str(addr))
+
+            if msg_type == "SUBSCRIBE":
+                with sub_lock:
+                    if topic not in subscriptions:
+                        subscriptions[topic] = []
+                    if conn not in subscriptions[topic]:
+                        subscriptions[topic].append(conn)
+                log_event(f"Subscribed: {client_id} to topic '{topic}'")
+                conn.sendall(json.dumps({"type": "ACK", "status": "Subscribed"}).encode('utf-8'))
+
+            elif msg_type == "UNSUBSCRIBE":
+                with sub_lock:
+                    if topic in subscriptions and conn in subscriptions[topic]:
+                        subscriptions[topic].remove(conn)
+                log_event(f"Unsubscribed: {client_id} from topic '{topic}'")
+                conn.sendall(json.dumps({"type": "ACK", "status": "Unsubscribed"}).encode('utf-8'))
+
+            elif msg_type == "PUBLISH":
+                delivered_count = 0
+                payload = json.dumps(msg).encode('utf-8')
+                with sub_lock:
+                    subscribers = subscriptions.get(topic, [])
+                    for sub_conn in list(subscribers):
+                        try:
+                            sub_conn.sendall(payload)
+                            delivered_count += 1
+                        except Exception:
+                            subscribers.remove(sub_conn)
+                log_event(f"Published: {topic} from {client_id}, delivered to {delivered_count} subscribers")
+                ack = json.dumps({"type": "ACK", "delivered": delivered_count})
+                conn.sendall(ack.encode('utf-8'))
+
+            else:
+                conn.sendall(json.dumps({"type": "ERROR", "reason": "Unknown command"}).encode('utf-8'))
+
+    except Exception:
         pass
     finally:
-        with lock:
-            for s in topics.values():
-                s.discard(conn)
-        send_locks.pop(conn, None)
+        with sub_lock:
+            for t, subs in subscriptions.items():
+                if conn in subs:
+                    subs.remove(conn)
+        log_event(f"Disconnected: {addr}")
         conn.close()
 
 def serve(port):
@@ -83,10 +82,10 @@ def serve(port):
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((HOST, port))
     srv.listen()
-    print(f"Broker listening on {port}", flush=True)
+    print(f"Broker listening on port {port}", flush=True)
     while True:
         conn, addr = srv.accept()
-        threading.Thread(target=handle, args=(conn, port), daemon=True).start()
+        threading.Thread(target=handle_client, args=(conn, addr, port), daemon=True).start()
 
 def main():
     for p in PORTS[1:]:

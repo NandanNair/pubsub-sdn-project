@@ -1,23 +1,41 @@
-import socket, json, sys, time, threading
+import socket
+import sys
+import json
 
-host = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
-topic = sys.argv[2] if len(sys.argv) > 2 else "news"
-port = int(sys.argv[3]) if len(sys.argv) > 3 else (5001 if topic == "alerts" else 5002)
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: python3 publisher.py <broker_ip> <topic>", flush=True)
+        sys.exit(1)
 
-s = socket.create_connection((host, port))
+    broker_ip = sys.argv[1]
+    topic = sys.argv[2]
+    port = 5001
 
-def reader():
-    for line in s.makefile("r"):
-        print("<-", line.strip(), flush=True)
+    # Read message from stdin
+    message_content = sys.stdin.read().strip()
+    if not message_content:
+        sys.exit(0)
 
-threading.Thread(target=reader, daemon=True).start()
-print(f"Connected to {host}:{port}. Type messages for '{topic}', Ctrl+C to quit.", flush=True)
-try:
-    for line in sys.stdin:
-        line = line.strip()
-        if line:
-            msg = {"type": "PUBLISH", "topic": topic, "payload": line, "ts": time.time()}
-            s.sendall((json.dumps(msg) + "\n").encode())
-except KeyboardInterrupt:
-    pass
-s.close()
+    payload = {
+        "type": "PUBLISH",
+        "topic": topic,
+        "content": message_content
+    }
+
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5.0)
+        s.connect((broker_ip, port))
+        s.sendall(json.dumps(payload).encode('utf-8'))
+        
+        response = s.recv(1024)
+        if response:
+            print(f"Server response: {response.decode('utf-8')}", flush=True)
+    except Exception as e:
+        print(f"Error connecting to broker at {broker_ip}:{port} - {e}", flush=True)
+        sys.exit(1)
+    finally:
+        s.close()
+
+if __name__ == "__main__":
+    main()
