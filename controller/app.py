@@ -48,7 +48,10 @@ MONITOR_INTERVAL = 5  # seconds
 
 class PubSubController(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
-
+   
+    #-----------------------------------------------------------------------------------------------------------------------------
+    # Initializes the SDN controller application, setting up MAC-to-port mapping tables and traffic classification structures.
+    #-----------------------------------------------------------------------------------------------------------------------------
     def __init__(self, *args, **kwargs):
         super(PubSubController, self).__init__(*args, **kwargs)
         self.mac_to_port = {}      # {dpid: {mac: port}}
@@ -56,9 +59,10 @@ class PubSubController(app_manager.RyuApp):
         self.last_counts = {}      # {(dpid, priority, match): packet_count}
         self.monitor_thread = hub.spawn(self._monitor)
 
-    # ------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------------------
     # Switch connects: install the table-miss rule
-    # ------------------------------------------------------------------
+    # Handles the initial switch handshake connection and installs the default priority-0 table-miss flow rule.
+    # -----------------------------------------------------------------------------------------------------------
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
@@ -74,9 +78,10 @@ class PubSubController(app_manager.RyuApp):
         self.logger.info("Switch %s connected, table-miss rule installed",
                          datapath.id)
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------------------------------------------
     # Helper: install a flow entry
-    # ------------------------------------------------------------------
+    # Installs an OpenFlow flow entry onto a switch datapath with specified match criteria, priority, and actions.
+    # --------------------------------------------------------------------------------------------------------------
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -106,9 +111,10 @@ class PubSubController(app_manager.RyuApp):
         self.logger.info("Installed class rules (HIGH=5001, NORMAL=5002) "
                          "towards %s via port %d", mac, port)
 
-    # ------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------------------------------------
     # Packet-in: learn MACs, install class rules + L2 rule
-    # ------------------------------------------------------------------
+    # Processes incoming Packet-In events, executes MAC learning, identifies traffic classes, and installs reactive flow entries.
+    # -----------------------------------------------------------------------------------------------------------------------------
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
         msg = ev.msg
@@ -154,9 +160,10 @@ class PubSubController(app_manager.RyuApp):
                                   in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
 
-    # ------------------------------------------------------------------
+    # ----------------------------------------------------------------------------------------------------------------------
     # Monitor: ask the switch for flow counters every few seconds
-    # ------------------------------------------------------------------
+    # Periodically polls network statistics from switches to track link performance and log traffic classification events.
+    # ----------------------------------------------------------------------------------------------------------------------
     def _monitor(self):
         while True:
             for dp in list(self.datapaths.values()):
