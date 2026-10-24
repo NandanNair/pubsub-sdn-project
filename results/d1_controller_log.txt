@@ -1,0 +1,5 @@
+Installed class rules (HIGH-5001, NORMAL-5002) towards 00:00:00:00:00:01 via port 3
+Installed class rules (HIGH-5001, NORMAL-5002) towards 00:00:00:00:00:02 via port 1
+Installed class rules (HIGH-5001, NORMAL-5002) towards 00:00:00:00:00:05 via port 5
+Installed class rules (HIGH-5001, NORMAL-5002) towards 00:00:00:00:00:03 via port 2
+Installed class rules (HIGH-5001, NORMAL-5002) towards 00:00:00:00:00:04 via port 4
