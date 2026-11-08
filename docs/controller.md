@@ -1,4 +1,4 @@
-# OpenFlow SDN Controller Documentation (Deliverable 2)
+# OpenFlow SDN Controller Documentation
 
 ## Overview
 The Ryu controller application (`controller/app.py`) manages the multi-switch network control plane. Building upon Deliverable 1, the D2 controller introduces dynamic topology discovery, loop-free shortest-path routing across a triangle topology, real-time link failure recovery, differentiated Quality of Service (QoS) traffic classification, and a REST API management interface.
@@ -16,7 +16,7 @@ The Ryu controller application (`controller/app.py`) manages the multi-switch ne
 
 ---
 
-## Core D2 Architectural Components
+## Architectural Components
 
 ### 1. Multi-Switch Discovery & Loop-Free Routing
 * **Mechanism:** The controller utilizes `ryu.topology` API (`get_switch`, `get_link`) and listens to topology events (`EventSwitchEnter`, `EventSwitchLeave`, `EventLinkAdd`, `EventLinkDelete`) to maintain a dynamic adjacency graph of the network.
