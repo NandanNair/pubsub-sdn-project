@@ -1014,145 +1014,148 @@ class PubSubController(app_manager.RyuApp):
     # ---------------------------------------------------------
 
     def _monitor(self):
-        """Requests flow statistics from every switch every five seconds."""
+    """Requests flow statistics from every switch every five seconds."""
 
-        self.logger.info(
-            "Flow statistics monitoring started; interval=%d seconds",
-            MONITOR_INTERVAL
-        )
-
-        while True:
-
-            for datapath in list(
-                self.datapaths.values()
-            ):
-
-                try:
-
-                    parser = datapath.ofproto_parser
-
-                    request = parser.OFPFlowStatsRequest(
-                        datapath
-                    )
-
-                    datapath.send_msg(request)
-
-                except Exception as error:
-
-                    self.logger.error(
-                        "Could not request flow statistics from switch %d: %s",
-                        datapath.id,
-                        str(error)
-                    )
-
-            hub.sleep(MONITOR_INTERVAL)
-
-    @set_ev_cls(
-        ofp_event.EventOFPFlowStatsReply,
-        MAIN_DISPATCHER
+    self.logger.warning(
+        "Flow statistics monitoring started; interval=%d seconds",
+        MONITOR_INTERVAL
     )
-    def flow_stats_reply_handler(self, ev):
-        """Collects HIGH and NORMAL flow counters and logs increases."""
 
-        dpid = ev.msg.datapath.id
+    while True:
 
-        high_count = 0
-        normal_count = 0
-        matched_flows = 0
+        for datapath in list(self.datapaths.values()):
 
-        for stat in ev.msg.body:
+            try:
+                parser = datapath.ofproto_parser
 
-            # Only inspect the HIGH and NORMAL priority rules.
-            if stat.priority not in (100, 50):
-                continue
-
-            # Identify the TCP port field in the flow match.
-            if "tcp_dst" in stat.match:
-                field = "tcp_dst"
-
-            elif "tcp_src" in stat.match:
-                field = "tcp_src"
-
-            else:
-                continue
-
-            tcp_port = stat.match[field]
-
-            class_info = TRAFFIC_CLASSES.get(
-                tcp_port
-            )
-
-            if class_info is None:
-                continue
-
-            traffic_class, expected_priority = class_info
-
-            # Ensure that the priority corresponds to the class.
-            if stat.priority != expected_priority:
-                continue
-
-            matched_flows += 1
-
-            key = (
-                dpid,
-                stat.priority,
-                str(stat.match)
-            )
-
-            previous = self.last_counts.get(key, 0)
-            current = stat.packet_count
-
-            # Calculate the number of newly observed packets.
-            # If a flow counter resets, treat its current value
-            # as the new packet increase.
-            if current > previous:
-                packet_increase = current - previous
-
-            elif current < previous:
-                packet_increase = current
-
-            else:
-                packet_increase = 0
-
-            if packet_increase > 0:
-
-                self.logger.info(
-                    "CLASS=%s switch=%d %s=%d packets=%d (+%d)",
-                    traffic_class,
-                    dpid,
-                    field,
-                    tcp_port,
-                    current,
-                    packet_increase
+                self.logger.warning(
+                    "STATS REQUEST SENT TO SWITCH %s",
+                    datapath.id
                 )
 
-            self.last_counts[key] = current
+                request = parser.OFPFlowStatsRequest(datapath)
 
-            if traffic_class == "HIGH":
-                high_count += current
+                datapath.send_msg(request)
 
-            elif traffic_class == "NORMAL":
-                normal_count += current
+            except Exception as error:
 
-        # Update the per-switch statistics.
-        self.class_counts_by_switch["HIGH"][dpid] = high_count
+                self.logger.error(
+                    "Could not request statistics from switch %s: %s",
+                    datapath.id,
+                    str(error)
+                )
 
-        self.class_counts_by_switch["NORMAL"][dpid] = normal_count
+        hub.sleep(MONITOR_INTERVAL)
 
-        # Calculate totals across all switches.
-        self.class_totals["HIGH"] = sum(
-            self.class_counts_by_switch["HIGH"].values()
-        )
+    @set_ev_cls(
+    ofp_event.EventOFPFlowStatsReply,
+    MAIN_DISPATCHER
+)
+def flow_stats_reply_handler(self, ev):
+    """Collects HIGH and NORMAL flow counters and logs increases."""
 
-        self.class_totals["NORMAL"] = sum(
-            self.class_counts_by_switch["NORMAL"].values()
-        )
+    dpid = ev.msg.datapath.id
 
-        self.logger.debug(
-            "Statistics reply: switch=%d matched_class_flows=%d",
+    self.logger.warning(
+        "STATS REPLY RECEIVED FROM SWITCH %s. Entries=%d",
+        dpid,
+        len(ev.msg.body)
+    )
+
+    high_count = 0
+    normal_count = 0
+    matched_flows = 0
+
+    for stat in ev.msg.body:
+
+        if stat.priority not in (100, 50):
+            continue
+
+        if "tcp_dst" in stat.match:
+            field = "tcp_dst"
+
+        elif "tcp_src" in stat.match:
+            field = "tcp_src"
+
+        else:
+            continue
+
+        tcp_port = stat.match[field]
+
+        class_info = TRAFFIC_CLASSES.get(tcp_port)
+
+        if class_info is None:
+            continue
+
+        traffic_class, expected_priority = class_info
+
+        if stat.priority != expected_priority:
+            continue
+
+        matched_flows += 1
+
+        key = (
             dpid,
-            matched_flows
+            stat.priority,
+            str(stat.match)
         )
+
+        previous = self.last_counts.get(key, 0)
+        current = stat.packet_count
+
+        if current > previous:
+            packet_increase = current - previous
+        elif current < previous:
+            packet_increase = current
+        else:
+            packet_increase = 0
+
+        self.logger.warning(
+            "FLOW DEBUG: switch=%s priority=%s packets=%s match=%s",
+            dpid,
+            stat.priority,
+            current,
+            stat.match
+        )
+
+        if packet_increase > 0:
+
+            self.logger.warning(
+                "CLASS=%s switch=%s %s=%s packets=%s (+%s)",
+                traffic_class,
+                dpid,
+                field,
+                tcp_port,
+                current,
+                packet_increase
+            )
+
+        self.last_counts[key] = current
+
+        if traffic_class == "HIGH":
+            high_count += current
+
+        elif traffic_class == "NORMAL":
+            normal_count += current
+
+    self.class_counts_by_switch["HIGH"][dpid] = high_count
+    self.class_counts_by_switch["NORMAL"][dpid] = normal_count
+
+    self.class_totals["HIGH"] = sum(
+        self.class_counts_by_switch["HIGH"].values()
+    )
+
+    self.class_totals["NORMAL"] = sum(
+        self.class_counts_by_switch["NORMAL"].values()
+    )
+
+    self.logger.warning(
+        "STATS SUMMARY: switch=%s matched_flows=%s HIGH=%s NORMAL=%s",
+        dpid,
+        matched_flows,
+        high_count,
+        normal_count
+    )
 
 
 # =============================================================
