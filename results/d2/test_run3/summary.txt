@@ -1,0 +1,8 @@
+Scenario: test_run3   mode=static   link s1-s3 down for 10 s
+Rate 10.0 msg/s, 300 messages sent, 163 received, 137 lost (45.7%)
+  lost seq numbers: 99-235
+Latency before failure : n=99 mean=2.5 ms  p95=5.9 ms  max=7.3 ms
+Latency during failure : no messages
+Latency after restore  : n=64 mean=2.3 ms  p95=4.2 ms  max=7.1 ms
+Longest delivery stall : 13.80 s (from -0.06 s to +13.75 s relative to link-down)
+  -> delivery did NOT resume until the link was restored (no rerouting)
