@@ -5,7 +5,7 @@ Explanation & Architecture:
 - Loop Prevention: Replaces OFPP_FLOOD with a BFS Spanning Tree over the triangle 
   topology to prevent broadcast storms.
 - MAC Learning: Learns host MACs strictly from host-facing ports (ignoring inter-switch ports).
-- Dynamic Rerouting: Listens to EventLinkDelete to recompute shortest paths on link failure.
+- Dynamic Rerouting: Listens to EventLinkDelete, flushes stale switch flows, and recomputes shortest paths.
 - QoS & Modes: Supports static/dynamic modes and TCP port QoS classification (5001 HIGH, 5002 NORMAL).
 """
 
@@ -105,7 +105,7 @@ class PubSubController(app_manager.RyuApp):
                  topo_event.EventLinkAdd, topo_event.EventLinkDelete],
                 MAIN_DISPATCHER)
     def topology_change_handler(self, ev):
-        """Discovers topology links/switches and recalculates adjacency and routing graphs."""
+        """Discovers topology links/switches, recalculates adjacency, and flushes stale flows on link down."""
         switch_list = get_switch(self, None)
         self.switches = [s.dp.id for s in switch_list]
         
@@ -124,7 +124,25 @@ class PubSubController(app_manager.RyuApp):
             self.links[(src_dpid, dst_dpid)] = src_port
             self.adjacency[src_dpid][dst_dpid] = src_port
 
+        self.static_paths_cache.clear()
         self.logger.info("Topology updated: Switches=%s, Links discovered=%d", self.switches, len(self.links))
+
+        # Task 3: On EventLinkDelete, remove stale flows using dead links to force immediate rerouting
+        if isinstance(ev, topo_event.EventLinkDelete):
+            for datapath in self.datapaths.values():
+                ofproto = datapath.ofproto
+                parser = datapath.ofproto_parser
+                match = parser.OFPMatch()
+                mod = parser.OFPFlowMod(
+                    datapath=datapath,
+                    command=ofproto.OFPFC_DELETE,
+                    out_port=ofproto.OFPP_ANY,
+                    out_group=ofproto.OFPG_ANY,
+                    priority=1,
+                    match=match
+                )
+                datapath.send_msg(mod)
+            self.logger.info("Link failure detected: Flushed stale flow entries to force instant dynamic rerouting.")
 
     def is_host_port(self, dpid, port_no):
         """Determines if a port is host-facing (not connected to another switch)."""
