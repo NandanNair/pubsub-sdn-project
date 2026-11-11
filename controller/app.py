@@ -774,7 +774,7 @@ class PubSubController(app_manager.RyuApp):
         MAIN_DISPATCHER
     )
     def packet_in_handler(self, ev):
-        """Learns MAC addresses and forwards packets."""
+        """Learns MAC addresses, classifies traffic and forwards packets."""
 
         msg = ev.msg
         datapath = msg.datapath
@@ -907,7 +907,7 @@ class PubSubController(app_manager.RyuApp):
                 for port in flood_ports
             ]
 
-            # Flooded packets are sent using packet-out.
+            # Flooded packets use packet-out.
             # No generic L2 flow is installed here.
 
         else:
@@ -934,9 +934,8 @@ class PubSubController(app_manager.RyuApp):
 
             elif tcp_pkt is not None:
 
-                # Do not install a generic L2 flow for TCP.
-                # This prevents TCP traffic from being captured by
-                # a broad L2 rule before it reaches the controller.
+                # Other TCP traffic must not install a generic L2 flow.
+                # Forward the current packet using packet-out.
                 match = None
                 flow_priority = None
 
@@ -954,8 +953,8 @@ class PubSubController(app_manager.RyuApp):
 
             else:
 
-                # ARP and other non-IP traffic get an Ethernet-type
-                # specific flow instead of a broad L2 flow.
+                # ARP and other non-IP traffic get an
+                # Ethernet-type-specific flow.
                 match = parser.OFPMatch(
                     in_port=in_port,
                     eth_dst=dst,
