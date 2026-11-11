@@ -1,4 +1,3 @@
-
 """
 Ryu OpenFlow 1.3 Controller for Pub-Sub SDN Project (Deliverable 2).
 
@@ -8,7 +7,8 @@ Features:
     Port 5001 -> HIGH priority 100
     Port 5002 -> NORMAL priority 50
 - Static and dynamic routing modes
-- BFS shortest-path routing
+- Class-aware path selection in dynamic mode
+- BFS shortest-path fallback routing
 - BFS spanning-tree flooding to prevent loops
 - Link failure detection and recovery
 - Flow-table cleanup and route recalculation
@@ -22,12 +22,11 @@ from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
 from ryu.lib import hub
-from ryu.lib.packet import ether_types, ethernet, packet, ipv4
+from ryu.lib.packet import ether_types, ethernet, packet, ipv4, tcp
 from ryu.ofproto import ofproto_v1_3
 from ryu.topology import event as topo_event
 from ryu.topology.api import get_switch, get_link
 from ryu.app.wsgi import ControllerBase, WSGIApplication, route
-
 
 
 TRAFFIC_CLASSES = {
@@ -38,6 +37,12 @@ TRAFFIC_CLASSES = {
 PRIORITY_L2 = 1
 PRIORITY_TABLE_MISS = 0
 MONITOR_INTERVAL = 5
+
+# Datapath IDs for the three-switch triangle topology.
+# s1 = 1, s2 = 2, s3 = 3.
+SWITCH_1 = 1
+SWITCH_2 = 2
+SWITCH_3 = 3
 
 
 class PubSubController(app_manager.RyuApp):
@@ -452,8 +457,50 @@ class PubSubController(app_manager.RyuApp):
 
         return []
 
-    def get_out_port(self, src_dpid, dst_dpid, dst_mac, in_port):
-        """Returns the next-hop output port for a destination."""
+    def get_class_path(self, src_dpid, dst_dpid, traffic_class):
+        """Chooses a preferred path for HIGH or NORMAL traffic.
+
+        The preference applies to traffic travelling between s1 and s3.
+        If the preferred links are unavailable, BFS supplies a fallback.
+        """
+
+        if self.mode != "dynamic":
+            return self.get_shortest_path(src_dpid, dst_dpid)
+
+        # HIGH traffic prefers the direct s1-s3 link in either direction.
+        if traffic_class == "HIGH":
+
+            if src_dpid == SWITCH_1 and dst_dpid == SWITCH_3:
+                if SWITCH_3 in self.adjacency.get(SWITCH_1, {}):
+                    return [SWITCH_1, SWITCH_3]
+
+            if src_dpid == SWITCH_3 and dst_dpid == SWITCH_1:
+                if SWITCH_1 in self.adjacency.get(SWITCH_3, {}):
+                    return [SWITCH_3, SWITCH_1]
+
+        # NORMAL traffic prefers the path through s2 in either direction.
+        if traffic_class == "NORMAL":
+
+            if src_dpid == SWITCH_1 and dst_dpid == SWITCH_3:
+                if (
+                    SWITCH_2 in self.adjacency.get(SWITCH_1, {}) and
+                    SWITCH_3 in self.adjacency.get(SWITCH_2, {})
+                ):
+                    return [SWITCH_1, SWITCH_2, SWITCH_3]
+
+            if src_dpid == SWITCH_3 and dst_dpid == SWITCH_1:
+                if (
+                    SWITCH_2 in self.adjacency.get(SWITCH_3, {}) and
+                    SWITCH_1 in self.adjacency.get(SWITCH_2, {})
+                ):
+                    return [SWITCH_3, SWITCH_2, SWITCH_1]
+
+        # No preferred path, or the preferred path is unavailable.
+        return self.get_shortest_path(src_dpid, dst_dpid)
+
+    def get_out_port(self, src_dpid, dst_dpid, dst_mac, in_port,
+                     traffic_class=None):
+        """Returns the next-hop port using the selected traffic path."""
 
         if src_dpid == dst_dpid:
 
@@ -464,21 +511,27 @@ class PubSubController(app_manager.RyuApp):
 
         cache_key = (src_dpid, dst_dpid)
 
-        if (
-            self.mode == "static" and
-            cache_key in self.static_paths_cache
-        ):
-            path = self.static_paths_cache[cache_key]
+        # Static mode keeps the existing cached BFS behaviour.
+        if self.mode == "static":
+
+            if cache_key in self.static_paths_cache:
+                path = self.static_paths_cache[cache_key]
+
+            else:
+                path = self.get_shortest_path(
+                    src_dpid,
+                    dst_dpid
+                )
+
+                self.static_paths_cache[cache_key] = path
 
         else:
 
-            path = self.get_shortest_path(
+            path = self.get_class_path(
                 src_dpid,
-                dst_dpid
+                dst_dpid,
+                traffic_class
             )
-
-            if self.mode == "static":
-                self.static_paths_cache[cache_key] = path
 
         if len(path) > 1:
 
@@ -528,6 +581,29 @@ class PubSubController(app_manager.RyuApp):
         if ip_pkt and ip_pkt.src in self.blocked_ips:
             return
 
+        # Identify the project traffic class from either TCP port direction.
+        # tcp_dst catches client-to-broker traffic.
+        # tcp_src catches broker-to-client reply traffic.
+        tcp_pkt = pkt.get_protocol(tcp.tcp)
+
+        traffic_class = None
+        class_priority = None
+        class_field = None
+        class_port = None
+
+        if tcp_pkt is not None:
+
+            if tcp_pkt.dst_port in TRAFFIC_CLASSES:
+                class_port = tcp_pkt.dst_port
+                class_field = "tcp_dst"
+
+            elif tcp_pkt.src_port in TRAFFIC_CLASSES:
+                class_port = tcp_pkt.src_port
+                class_field = "tcp_src"
+
+            if class_port is not None:
+                traffic_class, class_priority = TRAFFIC_CLASSES[class_port]
+
         # Learn source MAC only on host-facing ports.
         if self.is_host_port(dpid, in_port):
 
@@ -560,7 +636,8 @@ class PubSubController(app_manager.RyuApp):
                 dpid,
                 target_dpid,
                 dst,
-                in_port
+                in_port,
+                traffic_class
             )
 
         # Unknown destination or no available path:
@@ -599,16 +676,34 @@ class PubSubController(app_manager.RyuApp):
                 parser.OFPActionOutput(out_port)
             ]
 
-            match = parser.OFPMatch(
-                in_port=in_port,
-                eth_dst=dst
-            )
+            # Install a class-specific rule for classified TCP traffic.
+            # This retains the selected HIGH/NORMAL path in OVS.
+            if class_priority is not None and class_field is not None:
+
+                match = parser.OFPMatch(
+                    in_port=in_port,
+                    eth_dst=dst,
+                    eth_type=ether_types.ETH_TYPE_IP,
+                    ip_proto=6,
+                    **{class_field: class_port}
+                )
+
+                flow_priority = class_priority
+
+            else:
+
+                match = parser.OFPMatch(
+                    in_port=in_port,
+                    eth_dst=dst
+                )
+
+                flow_priority = PRIORITY_L2
 
             if msg.buffer_id != ofproto.OFP_NO_BUFFER:
 
                 self.add_flow(
                     datapath,
-                    PRIORITY_L2,
+                    flow_priority,
                     match,
                     actions,
                     msg.buffer_id
@@ -618,7 +713,7 @@ class PubSubController(app_manager.RyuApp):
 
             self.add_flow(
                 datapath,
-                PRIORITY_L2,
+                flow_priority,
                 match,
                 actions
             )
@@ -742,6 +837,7 @@ class PubSubRestController(ControllerBase):
             ip = body.get('ip')
 
             if not topic or not ip:
+
                 return json.dumps({
                     "status": "error",
                     "message": "Both topic and IP are required"
