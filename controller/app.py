@@ -29,7 +29,6 @@ from ryu.topology.api import get_switch, get_link
 from ryu.app.wsgi import ControllerBase, WSGIApplication, route
 
 
-pubsub_instance_name = 'pubsub_api'
 
 TRAFFIC_CLASSES = {
     5001: ("HIGH", 100),
@@ -69,7 +68,7 @@ class PubSubController(app_manager.RyuApp):
         wsgi = kwargs['wsgi']
         wsgi.register(
             PubSubRestController,
-            {pubsub_instance_name: self}
+            {'pubsub_app': self}
         )
 
         self.monitor_thread = hub.spawn(self._monitor)
@@ -721,17 +720,13 @@ class PubSubController(app_manager.RyuApp):
 class PubSubRestController(ControllerBase):
     """REST API for subscriptions, statistics, blocking and modes."""
 
-    def __init__(self, req, resp, url, constraints, app):
-
+    def __init__(self, req, link, data, **config):
         super(PubSubRestController, self).__init__(
-            req,
-            resp,
-            url,
-            constraints,
-            app
+            req, link, data, **config
         )
 
-        self.pubsub_app = app[pubsub_instance_name]
+        self.app = data['pubsub_app']
+        self.pubsub_app = self.app
 
     @route('pubsub', '/subscription', methods=['POST'])
     def handle_subscription(self, req, **kwargs):
