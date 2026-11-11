@@ -1,10 +1,10 @@
 """
 Ryu OpenFlow 1.3 Controller for Pub-Sub SDN Project (Deliverable 2).
 
-Explanation & Architecture:
+Viva Explanation & Architecture:
 - Loop Prevention: Replaces OFPP_FLOOD with a BFS Spanning Tree over the triangle topology.
 - MAC Learning: Learns host MACs strictly from host-facing ports.
-- Instant Rerouting: Listens to EventOFPPortStatus and EventLinkDelete to instantly update adjacency and flush stale flows.
+- Instant Rerouting: Listens to EventOFPPortStatus, records down ports, ignores stale LLDP, and flushes flows.
 - QoS & Modes: Supports static/dynamic modes and TCP port QoS classification (5001 HIGH, 5002 NORMAL).
 """
 
@@ -45,6 +45,7 @@ class PubSubController(app_manager.RyuApp):
         self.switches = []
         self.links = {}            # {(src_dpid, dst_dpid): port_no}
         self.adjacency = {}        # {dpid: {neighbor_dpid: port_no}}
+        self.down_ports = set()    # Track manually downed (dpid, port_no) to beat LLDP race condition
         
         # App state & REST config
         self.subscriptions = {}    # {topic: [ip1, ip2, ...]}
@@ -104,7 +105,7 @@ class PubSubController(app_manager.RyuApp):
                  topo_event.EventLinkAdd, topo_event.EventLinkDelete],
                 MAIN_DISPATCHER)
     def topology_change_handler(self, ev):
-        """Discovers topology links/switches, recalculates adjacency, and flushes stale flows."""
+        """Discovers topology links/switches, recalculates adjacency while filtering out down ports."""
         switch_list = get_switch(self, None)
         self.switches = [s.dp.id for s in switch_list]
         
@@ -119,15 +120,17 @@ class PubSubController(app_manager.RyuApp):
             src_dpid = link.src.dpid
             dst_dpid = link.dst.dpid
             src_port = link.src.port_no
+            dst_port = link.dst.port_no
+            
+            # Skip links connected to manually downed ports to bypass LLDP stale cache race condition
+            if (src_dpid, src_port) in self.down_ports or (dst_dpid, dst_port) in self.down_ports:
+                continue
             
             self.links[(src_dpid, dst_dpid)] = src_port
             self.adjacency[src_dpid][dst_dpid] = src_port
 
         self.static_paths_cache.clear()
         self.logger.info("Topology updated: Switches=%s, Links discovered=%d", self.switches, len(self.links))
-
-        if isinstance(ev, topo_event.EventLinkDelete):
-            self.flush_all_switches()
 
     @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
     def port_status_handler(self, ev):
@@ -138,18 +141,28 @@ class PubSubController(app_manager.RyuApp):
         dpid = datapath.id
         port_no = msg.desc.port_no
 
-        # Check if link/port went down
-        if msg.desc.state & ofproto.OFPPS_LINK_DOWN or (msg.desc.config & ofproto.OFPPC_PORT_DOWN):
-            changed = False
+        is_down = (msg.desc.state & ofproto.OFPPS_LINK_DOWN) or (msg.desc.config & ofproto.OFPPC_PORT_DOWN)
+
+        changed = False
+        if is_down:
+            if (dpid, port_no) not in self.down_ports:
+                self.down_ports.add((dpid, port_no))
+                changed = True
+        else:
+            if (dpid, port_no) in self.down_ports:
+                self.down_ports.remove((dpid, port_no))
+                changed = True
+
+        if changed:
+            # Remove immediately from current adjacency graph
             for src_dpid, nbrs in list(self.adjacency.items()):
                 for dst_dpid, p in list(nbrs.items()):
                     if src_dpid == dpid and p == port_no:
                         del self.adjacency[src_dpid][dst_dpid]
-                        changed = True
-            if changed:
-                self.static_paths_cache.clear()
-                self.logger.info("Instant Port Down detected on switch %d port %d. Flushing flows.", dpid, port_no)
-                self.flush_all_switches()
+            
+            self.static_paths_cache.clear()
+            self.logger.info("Port status change on switch %d port %d (Down=%s). Flushing flows.", dpid, port_no, is_down)
+            self.flush_all_switches()
 
     def flush_all_switches(self):
         """Flushes priority >= 1 flow rules across all connected switches to force re-routing."""
@@ -168,9 +181,9 @@ class PubSubController(app_manager.RyuApp):
             datapath.send_msg(mod)
 
     def is_host_port(self, dpid, port_no):
-        """Determines if a port is host-facing (not connected to another switch)."""
+        """Determines if a port is host-facing (not connected to an active switch link)."""
         inter_switch_ports = set(self.adjacency.get(dpid, {}).values())
-        return port_no not in inter_switch_ports
+        return port_no not in inter_switch_ports and (dpid, port_no) not in self.down_ports
 
     def get_spanning_tree_ports(self, dpid):
         """Computes a loop-free BFS spanning tree from switch adjacency to prevent broadcast storms."""
