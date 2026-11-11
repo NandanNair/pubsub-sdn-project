@@ -1,17 +1,6 @@
 """
-Ryu controller for the Pub-Sub + SDN project (D2 Multi-Switch, Loop-Free, REST API).
+Ryu OpenFlow 1.3 Controller for Pub-Sub SDN Project (Deliverable 2).
 
-What it adds in D2:
--------------------
-1. Multi-switch topology discovery using ryu.topology and stplib (or shortest path routing) 
-   to prevent broadcast storms in the s1-s2-s3 triangle loop.
-2. Dynamic rerouting: listens to link down events (EventLinkDelete) and recomputes 
-   paths, updating flow entries while preserving D1 CLASS=HIGH / NORMAL rules.
-3. Priority traffic handling & QoS differentiation (Priority 100 for HIGH / 50 for NORMAL).
-4. REST API on port 8080:
-   - POST /subscription {"action", "topic", "ip"}
-   - GET /stats (JSON flow stats and link status)
-   - POST /block {"ip"} (installs drop rule)
 """
 
 import json
@@ -25,7 +14,6 @@ from ryu.topology import event as topo_event
 from ryu.topology.api import get_switch, get_link
 from ryu.app.wsgi import ControllerBase, WSGIApplication, route
 
-# REST API namespace
 pubsub_instance_name = 'pubsub_api'
 
 TRAFFIC_CLASSES = {
@@ -48,26 +36,25 @@ class PubSubController(app_manager.RyuApp):
         self.datapaths = {}        # {dpid: datapath}
         self.last_counts = {}      # {(dpid, priority, match): packet_count}
         
-        # Topology graph data structures for multi-switch routing
+        # Topology state
         self.switches = []
         self.links = {}            # {(src_dpid, dst_dpid): port_no}
         self.adjacency = {}        # {dpid: {neighbor_dpid: port_no}}
         
-        # Application state for REST API
-        self.subscriptions = []
+        # App state & REST config
+        self.subscriptions = {}    # {topic: [ip1, ip2, ...]}
         self.blocked_ips = set()
+        self.mode = "dynamic"      # "static" or "dynamic"
+        self.static_paths_cache = {}
 
-        # Register WSGI controller for REST API
         wsgi = kwargs['wsgi']
         wsgi.register(PubSubRestController, {pubsub_instance_name: self})
 
         self.monitor_thread = hub.spawn(self._monitor)
 
-    # -------------------------------------------------------------------------
-    # Task 1: Switch Connection & Handshake
-    # -------------------------------------------------------------------------
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
+        """Initializes switch datapath and installs priority-0 table-miss flow rule."""
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -80,10 +67,8 @@ class PubSubController(app_manager.RyuApp):
         self.add_flow(datapath, PRIORITY_TABLE_MISS, match, actions)
         self.logger.info("Switch %s connected, table-miss rule installed", datapath.id)
 
-    # -------------------------------------------------------------------------
-    # Helper: Install a Flow Entry
-    # -------------------------------------------------------------------------
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
+        """Helper function to install OpenFlow flow entries on a datapath."""
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
@@ -95,10 +80,10 @@ class PubSubController(app_manager.RyuApp):
                                     match=match, instructions=inst)
         datapath.send_msg(mod)
 
-    # -------------------------------------------------------------------------
-    # Install Class Rules (D1 Maintained)
-    # -------------------------------------------------------------------------
     def install_class_rules(self, datapath, mac, port):
+        """Installs proactive QoS class rules (TCP 5001 HIGH, TCP 5002 NORMAL) towards a host."""
+        if self.mode == "static":
+            return  # Static mode disables prioritization baseline
         parser = datapath.ofproto_parser
         actions = [parser.OFPActionOutput(port)]
         for tcp_port, (cls, priority) in TRAFFIC_CLASSES.items():
@@ -110,14 +95,11 @@ class PubSubController(app_manager.RyuApp):
         self.logger.info("Installed class rules (HIGH=5001, NORMAL=5002) towards %s via port %d on switch %d", 
                          mac, port, datapath.id)
 
-    # -------------------------------------------------------------------------
-    # Task 1 & 2: Topology Discovery and Loop-Free Shortest Path Routing
-    # -------------------------------------------------------------------------
     @set_ev_cls([topo_event.EventSwitchEnter, topo_event.EventSwitchLeave,
                  topo_event.EventLinkAdd, topo_event.EventLinkDelete],
                 MAIN_DISPATCHER)
     def topology_change_handler(self, ev):
-        """Discovers switches and links dynamically, updating the adjacency graph."""
+        """Discovers topology links/switches and recalculates adjacency and routing graphs."""
         switch_list = get_switch(self, None)
         self.switches = [s.dp.id for s in switch_list]
         
@@ -132,15 +114,43 @@ class PubSubController(app_manager.RyuApp):
             src_dpid = link.src.dpid
             dst_dpid = link.dst.dpid
             src_port = link.src.port_no
-            dst_port = link.dst.port_no
             
             self.links[(src_dpid, dst_dpid)] = src_port
             self.adjacency[src_dpid][dst_dpid] = src_port
 
         self.logger.info("Topology updated: Switches=%s, Links discovered=%d", self.switches, len(self.links))
 
+    def is_host_port(self, dpid, port_no):
+        """Determines if a port is host-facing (not connected to another switch)."""
+        inter_switch_ports = set(self.adjacency.get(dpid, {}).values())
+        return port_no not in inter_switch_ports
+
+    def get_spanning_tree_ports(self, dpid):
+        """Computes a loop-free BFS spanning tree from switch adjacency to prevent broadcast storms."""
+        if not self.switches:
+            return set()
+        root = min(self.switches)
+        tree_edges = set()
+        visited = {root}
+        queue = [root]
+        
+        while queue:
+            curr = queue.pop(0)
+            for nbr in sorted(self.adjacency.get(curr, {}).keys()):
+                if nbr not in visited:
+                    visited.add(nbr)
+                    tree_edges.add((curr, nbr))
+                    tree_edges.add((nbr, curr))
+                    queue.append(nbr)
+        
+        tree_ports = set()
+        for nbr, port in self.adjacency.get(dpid, {}).items():
+            if (dpid, nbr) in tree_edges:
+                tree_ports.add(port)
+        return tree_ports
+
     def get_shortest_path(self, src_dpid, dst_dpid):
-        """Computes loop-free shortest path between switches using BFS (Dijkstra equivalent for unweighted graph)."""
+        """Computes shortest path between switches using BFS."""
         if src_dpid == dst_dpid:
             return [src_dpid]
         
@@ -163,23 +173,28 @@ class PubSubController(app_manager.RyuApp):
         return []
 
     def get_out_port(self, src_dpid, dst_dpid, dst_mac, in_port):
-        """Determines the correct output port avoiding broadcast storms in the triangle loop."""
+        """Determines output port based on static or dynamic mode shortest path."""
         if src_dpid == dst_dpid:
             if dst_mac in self.mac_to_port.get(src_dpid, {}):
                 return self.mac_to_port[src_dpid][dst_mac]
-            return self.datapaths[src_dpid].ofproto.OFPP_FLOOD
+            return None
 
-        path = self.get_shortest_path(src_dpid, dst_dpid)
+        cache_key = (src_dpid, dst_dpid)
+        if self.mode == "static" and cache_key in self.static_paths_cache:
+            path = self.static_paths_cache[cache_key]
+        else:
+            path = self.get_shortest_path(src_dpid, dst_dpid)
+            if self.mode == "static":
+                self.static_paths_cache[cache_key] = path
+
         if len(path) > 1:
             next_hop = path[1]
-            return self.adjacency[src_dpid].get(next_hop, self.datapaths[src_dpid].ofproto.OFPP_FLOOD)
-        return self.datapaths[src_dpid].ofproto.OFPP_FLOOD
+            return self.adjacency[src_dpid].get(next_hop)
+        return None
 
-    # -------------------------------------------------------------------------
-    # Packet-In Handler
-    # -------------------------------------------------------------------------
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
+        """Handles packet-ins, enforcing host-only MAC learning, loop-free flooding, and routing."""
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
@@ -196,19 +211,20 @@ class PubSubController(app_manager.RyuApp):
         dst = eth.dst
         src = eth.src
 
-        # Check for IP block rule (Task 4)
+        # Drop blocked IPs
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
         if ip_pkt and ip_pkt.src in self.blocked_ips:
-            return  # Drop packet silently
+            return
 
-        # Learn source MAC -> port mapping
-        self.mac_to_port.setdefault(dpid, {})
-        if self.mac_to_port[dpid].get(src) != in_port:
-            self.mac_to_port[dpid][src] = in_port
-            self.install_class_rules(datapath, src, in_port)
+        # Task 2: Learn host MACs STRICTLY from host-facing ports
+        if self.is_host_port(dpid, in_port):
+            self.mac_to_port.setdefault(dpid, {})
+            if self.mac_to_port[dpid].get(src) != in_port:
+                self.mac_to_port[dpid][src] = in_port
+                self.install_class_rules(datapath, src, in_port)
 
-        # Find destination datapath and output port across multi-switch topology
-        out_port = ofproto.OFPP_FLOOD
+        # Find destination switch and output port
+        out_port = None
         target_dpid = None
 
         for target_dp, mac_map in self.mac_to_port.items():
@@ -219,14 +235,26 @@ class PubSubController(app_manager.RyuApp):
         if target_dpid is not None:
             out_port = self.get_out_port(dpid, target_dpid, dst, in_port)
 
-        actions = [parser.OFPActionOutput(out_port)]
-
-        if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
-            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
-                self.add_flow(datapath, PRIORITY_L2, match, actions, msg.buffer_id)
-                return
-            self.add_flow(datapath, PRIORITY_L2, match, actions)
+        # Task 1: Loop-free flooding using host ports + spanning tree ports instead of OFPP_FLOOD
+        if out_port is None:
+            all_ports = dp_ports = list(datapath.ofproto_parser.OFPActionOutput(0).port) # handled below
+            host_facing = [p for p in range(1, 6) if self.is_host_port(dpid, p)]
+            st_ports = list(self.get_spanning_tree_ports(dpid))
+            
+            # Combine unique valid flood ports excluding in_port
+            flood_ports = set(host_facing + st_ports)
+            if in_port in flood_ports:
+                flood_ports.remove(in_port)
+            
+            actions = [parser.OFPActionOutput(p) for p in flood_ports]
+        else:
+            actions = [parser.OFPActionOutput(out_port)]
+            if out_port != ofproto.OFPP_FLOOD:
+                match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
+                if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+                    self.add_flow(datapath, PRIORITY_L2, match, actions, msg.buffer_id)
+                    return
+                self.add_flow(datapath, PRIORITY_L2, match, actions)
 
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
@@ -235,10 +263,8 @@ class PubSubController(app_manager.RyuApp):
                                     in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
 
-    # -------------------------------------------------------------------------
-    # Monitoring & Statistics (D1 Maintained)
-    # -------------------------------------------------------------------------
     def _monitor(self):
+        """Periodic background task auditing flow statistics for D1/D2 monitoring."""
         while True:
             for dp in list(self.datapaths.values()):
                 parser = dp.ofproto_parser
@@ -247,6 +273,7 @@ class PubSubController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def flow_stats_reply_handler(self, ev):
+        """Processes flow statistics replies and logs classification events."""
         dpid = ev.msg.datapath.id
         for stat in ev.msg.body:
             if stat.priority not in (100, 50):
@@ -269,10 +296,8 @@ class PubSubController(app_manager.RyuApp):
             self.last_counts[key] = stat.packet_count
 
 
-# -------------------------------------------------------------------------
-# Task 4: REST API Controller (ryu.app.wsgi)
-# -------------------------------------------------------------------------
 class PubSubRestController(ControllerBase):
+    """REST API Controller implementing subscription, stats, blocking, and mode selection endpoints."""
     def __init__(self, req, resp, url, constraints, app):
         super(PubSubRestController, self).__init__(req, resp, url, constraints, app)
         self.pubsub_app = app[pubsub_instance_name]
@@ -281,15 +306,39 @@ class PubSubRestController(ControllerBase):
     def handle_subscription(self, req, **kwargs):
         try:
             body = json.loads(req.body.decode('utf-8'))
-            self.pubsub_app.subscriptions.append(body)
+            topic = body.get('topic')
+            ip = body.get('ip')
+            if topic and ip:
+                self.pubsub_app.subscriptions.setdefault(topic, [])
+                if ip not in self.pubsub_app.subscriptions[topic]:
+                    self.pubsub_app.subscriptions[topic].append(ip)
             self.pubsub_app.logger.info("REST API: Subscription added: %s", body)
             return json.dumps({"status": "success", "subscriptions": self.pubsub_app.subscriptions})
+        except Exception as e:
+            return json.dumps({"status": "error", "message": str(e)})
+
+    @route('pubsub', '/subscriptions', methods=['GET'])
+    def get_subscriptions(self, req, **kwargs):
+        return json.dumps(self.pubsub_app.subscriptions)
+
+    @route('pubsub', '/mode', methods=['POST'])
+    def set_mode(self, req, **kwargs):
+        try:
+            body = json.loads(req.body.decode('utf-8'))
+            new_mode = body.get('mode')
+            if new_mode in ("static", "dynamic"):
+                self.pubsub_app.mode = new_mode
+                self.pubsub_app.static_paths_cache.clear()
+                self.pubsub_app.logger.info("REST API: Controller mode set to %s", new_mode)
+                return json.dumps({"status": "success", "mode": self.pubsub_app.mode})
+            return json.dumps({"status": "error", "message": "Invalid mode. Use 'static' or 'dynamic'."})
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)})
 
     @route('pubsub', '/stats', methods=['GET'])
     def get_stats(self, req, **kwargs):
         stats_data = {
+            "mode": self.pubsub_app.mode,
             "switches": list(self.pubsub_app.datapaths.keys()),
             "links": list(self.pubsub_app.links.keys()),
             "flow_counts": {str(k): v for k, v in self.pubsub_app.last_counts.items()},
