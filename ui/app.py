@@ -76,6 +76,24 @@ def parse_log_line(line):
     return ev
 
 
+def jsonl_event(d):
+    """Turn one events.jsonl line into a feed entry. Accepts the spec'd fields
+    (ts, event, client_ip) and Prakul's current ones (timestamp, type, ip, addr)."""
+    if "ts" in d:
+        try:
+            t = time.strftime("%H:%M:%S", time.localtime(float(d["ts"])))
+        except (TypeError, ValueError):
+            t = ""
+    else:
+        t = str(d.get("timestamp", ""))[-8:]
+    ev = str(d.get("event") or d.get("type") or "info").lower()
+    if ev not in ("connect", "subscribe", "unsubscribe", "publish", "disconnect"):
+        ev = "info"
+    client = d.get("client_ip") or d.get("ip") or d.get("addr") or ""
+    return {"t": t, "event": ev, "topic": d.get("topic", ""), "client": client,
+            "delivered": d.get("delivered"), "text": d.get("message", "")}
+
+
 def read_events(limit=200):
     path = event_source()
     if not path:
@@ -92,11 +110,7 @@ def read_events(limit=200):
                 d = json.loads(line)
             except ValueError:
                 continue
-            events.append({
-                "t": time.strftime("%H:%M:%S", time.localtime(d.get("ts", 0))),
-                "event": d.get("event", "info"), "topic": d.get("topic", ""),
-                "client": d.get("client_ip", ""), "delivered": d.get("delivered"), "text": "",
-            })
+            events.append(jsonl_event(d))
         else:
             ev = parse_log_line(line)
             if ev:
@@ -367,7 +381,7 @@ async function pollEvents() {
     const t = document.createElement("span"); t.className = "t"; t.textContent = e.t; li.appendChild(t);
     if (e.topic) { const g = document.createElement("span"); g.className = "tag " + (e.topic === "alerts" ? "alerts" : "other"); g.textContent = e.topic; li.appendChild(g); }
     const m = document.createElement("span");
-    if (e.event === "publish") m.textContent = "published by " + e.client + ", delivered to " + e.delivered + (e.delivered === 1 ? " subscriber" : " subscribers");
+    if (e.event === "publish") m.textContent = "published by " + e.client + (e.delivered == null ? "" : ", delivered to " + e.delivered + (e.delivered === 1 ? " subscriber" : " subscribers"));
     else if (e.event === "subscribe") m.textContent = e.client + " subscribed";
     else if (e.event === "unsubscribe") m.textContent = e.client + " unsubscribed";
     else if (e.event === "disconnect") m.textContent = e.client + " disconnected";
