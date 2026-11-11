@@ -41,23 +41,41 @@ def notify_controller(action, topic, client_ip):
             pass
     threading.Thread(target=_send, daemon=True).start()
 
+def client_sender(conn, q):
+    while True:
+        try:
+            data = q.get()
+            if data is None:
+                break
+            conn.sendall(data)
+        except Exception:
+            break
+
 def handle_line(conn, addr, line):
     client_ip = addr[0] if addr else ""
     try:
         msg = json.loads(line.decode('utf-8'))
     except Exception as e:
         err = json.dumps({"type": "ERROR", "msg": f"Invalid JSON: {str(e)}"}) + "\n"
-        conn.sendall(err.encode('utf-8'))
+        if conn in subscriber_queues:
+            subscriber_queues[conn].put(err.encode('utf-8'))
+        else:
+            try:
+                conn.sendall(err.encode('utf-8'))
+            except Exception:
+                pass
         log_event("ERROR", "", client_ip)
         return
 
-    msg_type = msg.get("type")
+    # Support both "type" and "action" keys (case-insensitive uppercase)
+    raw_type = msg.get("type") or msg.get("action") or ""
+    msg_type = raw_type.upper()
 
-    if msg_type == "SUBSCRIBE":
+    if msg_type in ["SUBSCRIBE", "subscribe"]:
         topic = msg.get("topic")
         if not topic:
             err = json.dumps({"type": "ERROR", "msg": "Missing topic"}) + "\n"
-            conn.sendall(err.encode('utf-8'))
+            subscriber_queues[conn].put(err.encode('utf-8'))
             return
         if topic not in subscriptions:
             subscriptions[topic] = []
@@ -65,27 +83,27 @@ def handle_line(conn, addr, line):
             subscriptions[topic].append(conn)
         
         ack = json.dumps({"type": "ACK", "ref": "SUBSCRIBE", "topic": topic}) + "\n"
-        conn.sendall(ack.encode('utf-8'))
+        subscriber_queues[conn].put(ack.encode('utf-8'))
         log_event("SUBSCRIBE", topic, client_ip)
         notify_controller("subscribe", topic, client_ip)
 
-    elif msg_type == "UNSUBSCRIBE":
+    elif msg_type in ["UNSUBSCRIBE", "unsubscribe"]:
         topic = msg.get("topic")
         if topic and topic in subscriptions and conn in subscriptions[topic]:
             subscriptions[topic].remove(conn)
         ack = json.dumps({"type": "ACK", "ref": "UNSUBSCRIBE", "topic": topic or ""}) + "\n"
-        conn.sendall(ack.encode('utf-8'))
+        subscriber_queues[conn].put(ack.encode('utf-8'))
         log_event("UNSUBSCRIBE", topic or "", client_ip)
         notify_controller("unsubscribe", topic or "", client_ip)
 
-    elif msg_type == "PUBLISH":
+    elif msg_type in ["PUBLISH", "publish"]:
         topic = msg.get("topic")
-        payload = msg.get("payload")
+        payload = msg.get("payload") or msg.get("message")
         ts = msg.get("ts", time.time())
 
         if not topic or payload is None:
             err = json.dumps({"type": "ERROR", "msg": "Missing topic or payload"}) + "\n"
-            conn.sendall(err.encode('utf-8'))
+            subscriber_queues[conn].put(err.encode('utf-8'))
             return
 
         target_clients = subscriptions.get(topic, [])
@@ -116,12 +134,12 @@ def handle_line(conn, addr, line):
                 del subscriber_queues[dead]
 
         ack = json.dumps({"type": "ACK", "ref": "PUBLISH", "topic": topic, "delivered": delivered_count}) + "\n"
-        conn.sendall(ack.encode('utf-8'))
+        subscriber_queues[conn].put(ack.encode('utf-8'))
         log_event("PUBLISH", topic, client_ip, delivered_count)
 
     else:
         err = json.dumps({"type": "ERROR", "msg": f"Unknown message type: {msg_type}"}) + "\n"
-        conn.sendall(err.encode('utf-8'))
+        subscriber_queues[conn].put(err.encode('utf-8'))
         log_event("ERROR", "", client_ip)
 
 def run_broker(port=PORT):
@@ -139,17 +157,13 @@ def run_broker(port=PORT):
         for s in readable:
             if s is server:
                 conn, addr = server.accept()
-                if port == 5002:
-                    err = json.dumps({"type": "ERROR", "msg": "Use port 5001 for alerts/normal class publishing"}) + "\n"
-                    try:
-                        conn.sendall(err.encode('utf-8'))
-                    except Exception:
-                        pass
-                    conn.close()
-                    continue
                 inputs.append(conn)
                 buffers[conn] = b""
-                subscriber_queues[conn] = queue.Queue()
+                q = queue.Queue()
+                subscriber_queues[conn] = q
+                threading.Thread(target=client_sender, args=(conn, q), daemon=True).start()
+                client_ip = addr[0] if addr else ""
+                log_event("CONNECT", "", client_ip)
             else:
                 try:
                     data = s.recv(4096)
@@ -158,10 +172,16 @@ def run_broker(port=PORT):
                         if s in buffers:
                             del buffers[s]
                         if s in subscriber_queues:
+                            subscriber_queues[s].put(None)
                             del subscriber_queues[s]
                         for t in subscriptions:
                             if s in subscriptions[t]:
                                 subscriptions[t].remove(s)
+                        try:
+                            peer = s.getpeername()
+                            log_event("DISCONNECT", "", peer[0] if peer else "")
+                        except Exception:
+                            pass
                         s.close()
                     else:
                         buffers[s] += data
@@ -178,6 +198,7 @@ def run_broker(port=PORT):
                     if s in buffers:
                         del buffers[s]
                     if s in subscriber_queues:
+                        subscriber_queues[s].put(None)
                         del subscriber_queues[s]
                     s.close()
 
