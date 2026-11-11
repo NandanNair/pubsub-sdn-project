@@ -1,0 +1,16 @@
+OFPST_FLOW reply (OF1.3) (xid=0x2):
+ cookie=0x0, duration=118.560s, table=0, n_packets=0, n_bytes=0, priority=100,tcp,dl_dst=00:00:00:00:00:03,tp_dst=5001 actions=output:2
+ cookie=0x0, duration=118.560s, table=0, n_packets=0, n_bytes=0, priority=50,tcp,dl_dst=00:00:00:00:00:03,tp_dst=5002 actions=output:2
+ cookie=0x0, duration=118.560s, table=0, n_packets=0, n_bytes=0, priority=100,tcp,dl_dst=00:00:00:00:00:02,tp_dst=5001 actions=output:1
+ cookie=0x0, duration=118.560s, table=0, n_packets=0, n_bytes=0, priority=50,tcp,dl_dst=00:00:00:00:00:02,tp_dst=5002 actions=output:1
+ cookie=0x0, duration=118.560s, table=0, n_packets=0, n_bytes=0, priority=100,tcp,dl_dst=3a:6c:0f:69:d3:a8,tp_dst=5001 actions=output:3
+ cookie=0x0, duration=118.560s, table=0, n_packets=0, n_bytes=0, priority=50,tcp,dl_dst=3a:6c:0f:69:d3:a8,tp_dst=5002 actions=output:3
+ cookie=0x0, duration=118.560s, table=0, n_packets=0, n_bytes=0, priority=100,tcp,dl_dst=00:00:00:00:00:03,tp_src=5001 actions=output:2
+ cookie=0x0, duration=118.560s, table=0, n_packets=0, n_bytes=0, priority=50,tcp,dl_dst=00:00:00:00:00:03,tp_src=5002 actions=output:2
+ cookie=0x0, duration=118.560s, table=0, n_packets=0, n_bytes=0, priority=100,tcp,dl_dst=00:00:00:00:00:02,tp_src=5001 actions=output:1
+ cookie=0x0, duration=118.560s, table=0, n_packets=0, n_bytes=0, priority=50,tcp,dl_dst=00:00:00:00:00:02,tp_src=5002 actions=output:1
+ cookie=0x0, duration=118.560s, table=0, n_packets=0, n_bytes=0, priority=100,tcp,dl_dst=3a:6c:0f:69:d3:a8,tp_src=5001 actions=output:3
+ cookie=0x0, duration=118.560s, table=0, n_packets=0, n_bytes=0, priority=50,tcp,dl_dst=3a:6c:0f:69:d3:a8,tp_src=5002 actions=output:3
+ cookie=0x0, duration=113.150s, table=0, n_packets=0, n_bytes=0, priority=1,in_port=3,dl_dst=00:00:00:00:00:02 actions=output:1
+ cookie=0x0, duration=113.139s, table=0, n_packets=0, n_bytes=0, priority=1,in_port=1,dl_dst=4e:fa:1d:3c:ea:ca actions=output:3
+ cookie=0x0, duration=118.560s, table=0, n_packets=7, n_bytes=570, priority=0 actions=CONTROLLER:65535

@@ -1,0 +1,5 @@
+STATIC MODE: 
+{"status": "success", "mode": "static"}
+
+DYNAMIC MODE:
+{"status": "success", "mode": "dynamic"}

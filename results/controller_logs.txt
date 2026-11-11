@@ -1,0 +1,36 @@
+========== SWITCH CONNECTIONS ==========
+Switch 1 connected
+Switch 2 connected
+Switch 3 connected
+
+========== TOPOLOGY DISCOVERY ==========
+Topology refreshed: switches=[2, 1, 3], directed links=6
+
+========== STATISTICS API ==========
+GET /stats HTTP/1.1 200
+
+========== SUBSCRIPTIONS API ==========
+GET /subscriptions HTTP/1.1 200
+
+========== STATIC MODE ==========
+REST API: Controller mode set to static
+POST /mode HTTP/1.1 200
+
+========== DYNAMIC MODE ==========
+REST API: Controller mode set to dynamic
+POST /mode HTTP/1.1 200
+
+========== LINK FAILURE ==========
+Port status changed: switch=1 port=3 down=True
+Topology refreshed: switches=[2, 1, 3], directed links=4
+
+========== LINK RECOVERY ==========
+Port status changed: switch=1 port=3 down=False
+Topology refreshed: switches=[2, 1, 3], directed links=4
+
+========== SUBSCRIPTION REGISTRATION ==========
+REST API: Subscription added: {'topic': 'alerts', 'ip': '10.0.0.1'}
+GET /subscriptions HTTP/1.1 200
+
+========== FLOW RULE UPDATES ==========
+Stale flow rules removed and essential rules reinstalled
