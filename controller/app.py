@@ -1,7 +1,7 @@
 """
 Ryu OpenFlow 1.3 Controller for Pub-Sub SDN Project (Deliverable 2).
 
-Viva Explanation & Architecture:
+Explanation & Architecture:
 - Loop Prevention: Replaces OFPP_FLOOD with a BFS Spanning Tree over the triangle topology.
 - MAC Learning: Learns host MACs strictly from host-facing ports.
 - Instant Rerouting: Listens to EventOFPPortStatus and EventLinkDelete to instantly update adjacency and flush stale flows.
