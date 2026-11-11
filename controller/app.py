@@ -69,7 +69,6 @@ class PubSubController(app_manager.RyuApp):
         self.mac_to_port = {}
         self.datapaths = {}
 
-        # Flow statistics
         self.last_counts = {}
 
         self.class_counts_by_switch = {
@@ -82,19 +81,16 @@ class PubSubController(app_manager.RyuApp):
             "NORMAL": 0
         }
 
-        # Topology information
         self.switches = []
         self.links = {}
         self.reverse_links = {}
         self.adjacency = {}
         self.down_ports = set()
 
-        # Preserve discovered link information.
         self.known_links = {}
         self.port_peers = {}
         self.link_status = {}
 
-        # Application information
         self.subscriptions = {}
         self.blocked_ips = set()
 
@@ -102,7 +98,6 @@ class PubSubController(app_manager.RyuApp):
         self.static_paths_cache = {}
 
         wsgi = kwargs['wsgi']
-
         wsgi.register(
             PubSubRestController,
             {'pubsub_app': self}
@@ -124,23 +119,17 @@ class PubSubController(app_manager.RyuApp):
         datapath = ev.msg.datapath
         dpid = datapath.id
 
-        # Clear stale port-down information for this switch.
         self.down_ports = {
             p for p in self.down_ports
             if p[0] != dpid
         }
 
-        # Remove MAC learning information from its old connection.
         self.mac_to_port.pop(dpid, None)
-
-        # Clear old cached paths.
         self.static_paths_cache.clear()
 
         self.datapaths[dpid] = datapath
 
         self.install_table_miss(datapath)
-
-        # Restore blocked-IP rules on reconnect.
         self.install_block_rules(datapath)
 
         self.logger.info(
@@ -194,7 +183,6 @@ class PubSubController(app_manager.RyuApp):
             buffer_id is not None
             and buffer_id != ofproto.OFP_NO_BUFFER
         ):
-
             mod = parser.OFPFlowMod(
                 datapath=datapath,
                 buffer_id=buffer_id,
@@ -202,9 +190,7 @@ class PubSubController(app_manager.RyuApp):
                 match=match,
                 instructions=instructions
             )
-
         else:
-
             mod = parser.OFPFlowMod(
                 datapath=datapath,
                 priority=priority,
@@ -230,7 +216,6 @@ class PubSubController(app_manager.RyuApp):
                 ipv4_src=ip
             )
 
-            # Empty actions mean that matching packets are dropped.
             self.add_flow(
                 datapath,
                 PRIORITY_BLOCK,
@@ -352,10 +337,8 @@ class PubSubController(app_manager.RyuApp):
                 self.adjacency[src_dpid][dst_dpid] = src_port
 
             else:
-
                 self.link_status[link_key] = "DOWN"
 
-        # Previously known links absent from discovery are DOWN.
         for link_key in self.known_links:
 
             if self.link_status.get(link_key) != "DOWN":
@@ -368,7 +351,6 @@ class PubSubController(app_manager.RyuApp):
                 if not found:
                     self.link_status[link_key] = "DOWN"
 
-        # Do not clear static paths during a topology change.
         if self.mode != "static":
             self.static_paths_cache.clear()
 
@@ -397,7 +379,6 @@ class PubSubController(app_manager.RyuApp):
             self.logger.info(
                 "Static mode: topology recorded without rerouting"
             )
-
             return
 
         self.flush_all_switches()
@@ -443,17 +424,14 @@ class PubSubController(app_manager.RyuApp):
                 remote_dpid, remote_port = remote_link
 
                 if (remote_dpid, remote_port) not in self.down_ports:
-
                     self.down_ports.add(
                         (remote_dpid, remote_port)
                     )
-
                     changed = True
 
         else:
 
             if (dpid, port_no) in self.down_ports:
-
                 self.down_ports.remove((dpid, port_no))
                 changed = True
 
@@ -462,11 +440,9 @@ class PubSubController(app_manager.RyuApp):
                 remote_dpid, remote_port = remote_link
 
                 if (remote_dpid, remote_port) in self.down_ports:
-
                     self.down_ports.remove(
                         (remote_dpid, remote_port)
                     )
-
                     changed = True
 
         if changed:
@@ -474,13 +450,11 @@ class PubSubController(app_manager.RyuApp):
             link_key = None
 
             if remote_link is not None:
-
                 link_key = tuple(
                     sorted((dpid, remote_link[0]))
                 )
 
             if link_key is not None:
-
                 self.link_status[link_key] = (
                     "DOWN" if is_down else "UP"
                 )
@@ -492,7 +466,6 @@ class PubSubController(app_manager.RyuApp):
                 is_down
             )
 
-            # Record topology changes in both modes.
             self.refresh_topology()
 
             if self.mode == "static":
@@ -500,12 +473,9 @@ class PubSubController(app_manager.RyuApp):
                 self.logger.info(
                     "Static mode: automatic rerouting disabled"
                 )
-
                 return
 
-            # Dynamic mode recalculates routes.
             self.static_paths_cache.clear()
-
             self.flush_all_switches()
 
     # ---------------------------------------------------------
@@ -532,11 +502,8 @@ class PubSubController(app_manager.RyuApp):
             datapath.send_msg(delete_message)
 
             self.install_table_miss(datapath)
-
-            # Restore blocked-IP rules after flow-table cleanup.
             self.install_block_rules(datapath)
 
-            # Restore class rules for learned hosts.
             for mac, port in self.mac_to_port.get(
                 datapath.id, {}
             ).items():
@@ -681,13 +648,11 @@ class PubSubController(app_manager.RyuApp):
         """Selects preferred paths for HIGH and NORMAL traffic."""
 
         if self.mode != "dynamic":
-
             return self.get_shortest_path(
                 src_dpid,
                 dst_dpid
             )
 
-        # HIGH prefers the direct s1-s3 link.
         if traffic_class == "HIGH":
 
             if (
@@ -697,7 +662,6 @@ class PubSubController(app_manager.RyuApp):
                     SWITCH_1, {}
                 )
             ):
-
                 return [SWITCH_1, SWITCH_3]
 
             if (
@@ -707,10 +671,8 @@ class PubSubController(app_manager.RyuApp):
                     SWITCH_3, {}
                 )
             ):
-
                 return [SWITCH_3, SWITCH_1]
 
-        # NORMAL prefers the path through s2.
         if traffic_class == "NORMAL":
 
             if (
@@ -723,7 +685,6 @@ class PubSubController(app_manager.RyuApp):
                     SWITCH_2, {}
                 )
             ):
-
                 return [
                     SWITCH_1,
                     SWITCH_2,
@@ -740,14 +701,12 @@ class PubSubController(app_manager.RyuApp):
                     SWITCH_2, {}
                 )
             ):
-
                 return [
                     SWITCH_3,
                     SWITCH_2,
                     SWITCH_1
                 ]
 
-        # BFS fallback when the preferred path is unavailable.
         return self.get_shortest_path(
             src_dpid,
             dst_dpid
@@ -768,7 +727,6 @@ class PubSubController(app_manager.RyuApp):
             if dst_mac in self.mac_to_port.get(
                 src_dpid, {}
             ):
-
                 return self.mac_to_port[src_dpid][dst_mac]
 
             return None
@@ -787,7 +745,6 @@ class PubSubController(app_manager.RyuApp):
                 self.static_paths_cache[cache_key] = path
 
             else:
-
                 path = self.static_paths_cache[cache_key]
 
         else:
@@ -950,6 +907,9 @@ class PubSubController(app_manager.RyuApp):
                 for port in flood_ports
             ]
 
+            # Flooded packets are sent using packet-out.
+            # No generic L2 flow is installed here.
+
         else:
 
             actions = [
@@ -961,6 +921,7 @@ class PubSubController(app_manager.RyuApp):
                 and class_field is not None
             ):
 
+                # Classified TCP traffic gets a class-specific flow.
                 match = parser.OFPMatch(
                     in_port=in_port,
                     eth_dst=dst,
@@ -971,34 +932,61 @@ class PubSubController(app_manager.RyuApp):
 
                 flow_priority = class_priority
 
-            else:
+            elif tcp_pkt is not None:
 
+                # Do not install a generic L2 flow for TCP.
+                # This prevents TCP traffic from being captured by
+                # a broad L2 rule before it reaches the controller.
+                match = None
+                flow_priority = None
+
+            elif ip_pkt is not None:
+
+                # Non-TCP IPv4 traffic gets a protocol-specific flow.
                 match = parser.OFPMatch(
                     in_port=in_port,
-                    eth_dst=dst
+                    eth_dst=dst,
+                    eth_type=ether_types.ETH_TYPE_IP,
+                    ip_proto=ip_pkt.proto
                 )
 
                 flow_priority = PRIORITY_L2
 
-            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+            else:
+
+                # ARP and other non-IP traffic get an Ethernet-type
+                # specific flow instead of a broad L2 flow.
+                match = parser.OFPMatch(
+                    in_port=in_port,
+                    eth_dst=dst,
+                    eth_type=eth.ethertype
+                )
+
+                flow_priority = PRIORITY_L2
+
+            # Install a flow only when a suitable match exists.
+            if match is not None:
+
+                if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+
+                    self.add_flow(
+                        datapath,
+                        flow_priority,
+                        match,
+                        actions,
+                        msg.buffer_id
+                    )
+
+                    return
 
                 self.add_flow(
                     datapath,
                     flow_priority,
                     match,
-                    actions,
-                    msg.buffer_id
+                    actions
                 )
 
-                return
-
-            self.add_flow(
-                datapath,
-                flow_priority,
-                match,
-                actions
-            )
-
+        # Send the current packet.
         data = None
 
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
@@ -1102,7 +1090,6 @@ class PubSubController(app_manager.RyuApp):
             elif traffic_class == "NORMAL":
                 normal_count += stat.packet_count
 
-        # Replace this switch's previous snapshot.
         self.class_counts_by_switch["HIGH"][dpid] = (
             high_count
         )
@@ -1111,7 +1098,6 @@ class PubSubController(app_manager.RyuApp):
             normal_count
         )
 
-        # Aggregate latest snapshots from all switches.
         self.class_totals["HIGH"] = sum(
             self.class_counts_by_switch["HIGH"].values()
         )
@@ -1213,7 +1199,6 @@ class PubSubRestController(ControllerBase):
                         ].remove(ip)
 
                     if not self.pubsub_app.subscriptions[topic]:
-
                         del self.pubsub_app.subscriptions[topic]
 
                 self.pubsub_app.logger.info(
@@ -1288,12 +1273,9 @@ class PubSubRestController(ControllerBase):
                 })
 
             self.pubsub_app.mode = new_mode
-
             self.pubsub_app.static_paths_cache.clear()
 
             if new_mode == "static":
-
-                # Capture the initial paths before any failure.
                 self.pubsub_app.build_static_path_cache()
 
             self.pubsub_app.flush_all_switches()
@@ -1359,7 +1341,6 @@ class PubSubRestController(ControllerBase):
                 "NORMAL": app.class_totals["NORMAL"]
             },
 
-            # Kept for compatibility with existing UI code.
             "flow_counts": {
                 "HIGH": app.class_totals["HIGH"],
                 "NORMAL": app.class_totals["NORMAL"]
@@ -1405,7 +1386,6 @@ class PubSubRestController(ControllerBase):
                 ip_to_block
             )
 
-            # Install priority-200 drop rules on all switches.
             for datapath in list(
                 self.pubsub_app.datapaths.values()
             ):
