@@ -199,18 +199,37 @@ def run_one(outdir, mode, classes, rate, duration, bw, pad, failure, settle):
     net = build_network(bw=bw)
     meta = {"mode": mode, "classes": classes, "rate": rate, "duration": duration,
             "count": count, "bw": bw, "pad": pad, "link": None, "t_down": None, "t_up": None}
-    me = "python3 tools/experiments.py"
+    me = "python3 -u tools/experiments.py"
     try:
         time.sleep(settle)  # let link discovery finish
-        broker = net.get("broker")
-        for c in classes:  # prime ARP and the first flow rules
-            for h in CLASSES[c][2:]:
-                net.get(h).cmd(f"ping -c 2 -W 2 {BROKER_IP}")
+        # Wait until every host can reach every other host (this also teaches the
+        # controller where all hosts are), the same as a manual pingall.
+        hosts = [net.get(h) for h in ("broker", "pub1", "pub2", "sub1", "sub2")]
+        start_wait = time.time()
+        while True:
+            loss = net.ping(hosts, timeout=1)
+            if loss == 0:
+                print(f"    network ready: pingall 0% loss after {time.time() - start_wait:.0f} s")
+                break
+            if time.time() - start_wait > 60:
+                raise RuntimeError(f"hosts still cannot reach each other after 60 s ({loss:.0f}% ping loss). "
+                                   "Is Ryu running, and does a manual pingall work?")
+            time.sleep(2)
 
-        broker.cmd(f"python3 broker/broker.py 5001 > {outdir}/broker_5001.log 2>&1 &")
+        broker = net.get("broker")
+        broker.cmd(f"python3 -u broker/broker.py 5001 > {outdir}/broker_5001.log 2>&1 &")
         if "NORMAL" in classes:
-            broker.cmd(f"python3 broker/broker.py 5002 > {outdir}/broker_5002.log 2>&1 &")
+            broker.cmd(f"python3 -u broker/broker.py 5002 > {outdir}/broker_5002.log 2>&1 &")
         time.sleep(1.5)
+        # Check that the broker accepts TCP connections before starting the probes.
+        for c in classes:
+            port, pubh = CLASSES[c][1], CLASSES[c][2]
+            check = net.get(pubh).cmd(
+                f"python3 -c \"import socket; socket.create_connection(('{BROKER_IP}', {port}), 3); print('tcp-ok')\" 2>&1")
+            if "tcp-ok" not in check:
+                log = broker.cmd(f"tail -n 5 {outdir}/broker_{port}.log")
+                raise RuntimeError(f"{pubh} cannot open a TCP connection to the broker on port {port}.\n"
+                                   f"connect error: {check.strip()[-300:]}\nbroker log: {log.strip()}")
         for c in classes:
             topic, port, _, subh = CLASSES[c]
             net.get(subh).cmd(f"{me} sub {BROKER_IP} {topic} --port {port} "
@@ -287,7 +306,10 @@ def cmd_run(a):
                 for run in range(1, a.runs + 1):
                     outdir = os.path.join(RESULTS, exp, f"{mode}_r{rate:g}_run{run}")
                     print(f"{exp}  mode={mode}  rate={rate:g} msg/s  run {run}/{a.runs}  -> {outdir}")
-                    run_one(outdir, mode, spec["classes"], rate, duration, bw, pad, failure, a.settle)
+                    try:
+                        run_one(outdir, mode, spec["classes"], rate, duration, bw, pad, failure, a.settle)
+                    except RuntimeError as e:
+                        sys.exit(f"\nStopped: {e}")
                     meta_path = os.path.join(outdir, "meta.json")
                     meta = json.load(open(meta_path))
                     meta.update({"experiment": exp, "run": run})
