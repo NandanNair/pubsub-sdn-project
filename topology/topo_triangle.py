@@ -18,7 +18,8 @@ The VM itself is attached to s3 with the address 10.0.0.254, so hosts can
 reach the Ryu REST API at http://10.0.0.254:8080. (Inside Mininet, 127.0.0.1
 on a host is the host's own loopback, not the controller.)
 
-Usage:  sudo python3 topology/topo_triangle.py [--skip-ping] [--auto]
+Usage:  sudo python3 topology/topo_triangle.py [--skip-ping] [--auto] [--bw MBIT]
+  --bw 10   limit each switch-to-switch link to 10 Mbit/s (for the congestion experiment)
 At the mininet> prompt:  link s1 s3 down   /   link s1 s3 up
 """
 import sys
@@ -27,6 +28,7 @@ import time
 from mininet.net import Mininet
 from mininet.topo import Topo
 from mininet.node import RemoteController, Node
+from mininet.link import TCLink
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 
@@ -39,7 +41,9 @@ class TriangleTopo(Topo):
     """Hosts keep the same IPs as D1. The broker is added first so that the
     Mininet MACs match D1 (:01 broker, :02 pub1, :03 pub2, :04 sub1, :05 sub2)."""
 
-    def build(self):
+    def build(self, bw=None):
+        # bw (Mbit/s) limits the three switch-to-switch links; None means unlimited.
+        link_opts = {"bw": bw} if bw else {}
         s1 = self.addSwitch("s1", protocols="OpenFlow13")
         s2 = self.addSwitch("s2", protocols="OpenFlow13")
         s3 = self.addSwitch("s3", protocols="OpenFlow13")
@@ -58,9 +62,9 @@ class TriangleTopo(Topo):
         self.addLink(broker, s3)
 
         # Switch triangle.
-        self.addLink(s1, s3)   # primary path
-        self.addLink(s1, s2)   # backup path, first hop
-        self.addLink(s2, s3)   # backup path, second hop
+        self.addLink(s1, s3, **link_opts)   # primary path
+        self.addLink(s1, s2, **link_opts)   # backup path, first hop
+        self.addLink(s2, s3, **link_opts)   # backup path, second hop
 
 
 def link_down(net, a="s1", b="s3"):
@@ -72,9 +76,10 @@ def link_up(net, a="s1", b="s3"):
     net.configLinkStatus(a, b, "up")
 
 
-def build_network():
+def build_network(bw=None):
     net = Mininet(
-        topo=TriangleTopo(),
+        topo=TriangleTopo(bw=bw),
+        link=TCLink,
         controller=None,
         autoSetMacs=True,
         autoStaticArp=False,
@@ -91,7 +96,11 @@ def build_network():
 
 def main():
     setLogLevel("info")
-    net = build_network()
+    bw = None
+    if "--bw" in sys.argv:
+        bw = float(sys.argv[sys.argv.index("--bw") + 1])
+        info("*** Switch-to-switch links limited to %s Mbit/s\n" % bw)
+    net = build_network(bw=bw)
 
     if "--skip-ping" not in sys.argv:
         info("*** Waiting for the controller to settle\n")
