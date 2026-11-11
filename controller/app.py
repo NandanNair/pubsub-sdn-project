@@ -1,6 +1,12 @@
 """
 Ryu OpenFlow 1.3 Controller for Pub-Sub SDN Project (Deliverable 2).
 
+Explanation & Architecture:
+- Loop Prevention: Replaces OFPP_FLOOD with a BFS Spanning Tree over the triangle 
+  topology to prevent broadcast storms.
+- MAC Learning: Learns host MACs strictly from host-facing ports (ignoring inter-switch ports).
+- Dynamic Rerouting: Listens to EventLinkDelete to recompute shortest paths on link failure.
+- QoS & Modes: Supports static/dynamic modes and TCP port QoS classification (5001 HIGH, 5002 NORMAL).
 """
 
 import json
@@ -83,7 +89,7 @@ class PubSubController(app_manager.RyuApp):
     def install_class_rules(self, datapath, mac, port):
         """Installs proactive QoS class rules (TCP 5001 HIGH, TCP 5002 NORMAL) towards a host."""
         if self.mode == "static":
-            return  # Static mode disables prioritization baseline
+            return
         parser = datapath.ofproto_parser
         actions = [parser.OFPActionOutput(port)]
         for tcp_port, (cls, priority) in TRAFFIC_CLASSES.items():
@@ -216,7 +222,7 @@ class PubSubController(app_manager.RyuApp):
         if ip_pkt and ip_pkt.src in self.blocked_ips:
             return
 
-        # Task 2: Learn host MACs STRICTLY from host-facing ports
+        # Learn host MACs strictly from host-facing ports
         if self.is_host_port(dpid, in_port):
             self.mac_to_port.setdefault(dpid, {})
             if self.mac_to_port[dpid].get(src) != in_port:
@@ -235,13 +241,12 @@ class PubSubController(app_manager.RyuApp):
         if target_dpid is not None:
             out_port = self.get_out_port(dpid, target_dpid, dst, in_port)
 
-        # Task 1: Loop-free flooding using host ports + spanning tree ports instead of OFPP_FLOOD
+        # Loop-free flooding using dynamic datapath ports + spanning tree ports
         if out_port is None:
-            all_ports = dp_ports = list(datapath.ofproto_parser.OFPActionOutput(0).port) # handled below
-            host_facing = [p for p in range(1, 6) if self.is_host_port(dpid, p)]
+            all_ports = [p for p in datapath.ports.keys() if p < ofproto.OFPP_MAX]
+            host_facing = [p for p in all_ports if self.is_host_port(dpid, p)]
             st_ports = list(self.get_spanning_tree_ports(dpid))
             
-            # Combine unique valid flood ports excluding in_port
             flood_ports = set(host_facing + st_ports)
             if in_port in flood_ports:
                 flood_ports.remove(in_port)
@@ -264,7 +269,7 @@ class PubSubController(app_manager.RyuApp):
         datapath.send_msg(out)
 
     def _monitor(self):
-        """Periodic background task auditing flow statistics for D1/D2 monitoring."""
+        """Periodic background task auditing flow statistics."""
         while True:
             for dp in list(self.datapaths.values()):
                 parser = dp.ofproto_parser
