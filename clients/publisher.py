@@ -3,7 +3,7 @@ import json
 import sys
 import time
 
-def run_publisher(host, port, topic):
+def run_publisher(host, topic, port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((host, port))
     buf = b""
@@ -34,7 +34,13 @@ def run_publisher(host, port, topic):
     s.close()
 
 if __name__ == "__main__":
-    if len(sys.argv) < 4:
-        print("Usage: python3 publisher.py <host> <port> <topic>")
+    if len(sys.argv) < 3:
+        print("Usage: python3 publisher.py <broker_ip> <topic> [port]")
         sys.exit(1)
-    run_publisher(sys.argv[1], int(sys.argv[2]), sys.argv[3])
+    host = sys.argv[1]
+    topic = sys.argv[2]
+    if len(sys.argv) >= 4:
+        port = int(sys.argv[3])
+    else:
+        port = 5001 if topic == "alerts" else 5002
+    run_publisher(host, topic, port)
