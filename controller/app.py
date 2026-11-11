@@ -69,6 +69,7 @@ class PubSubController(app_manager.RyuApp):
         self.mac_to_port = {}
         self.datapaths = {}
 
+        # Stores the previous packet count of each monitored flow.
         self.last_counts = {}
 
         self.class_counts_by_switch = {
@@ -104,6 +105,11 @@ class PubSubController(app_manager.RyuApp):
         )
 
         self.monitor_thread = hub.spawn(self._monitor)
+
+        self.logger.info(
+            "PubSub SDN Controller started in %s mode",
+            self.mode
+        )
 
     # ---------------------------------------------------------
     # Switch connection and flow installation
@@ -514,6 +520,8 @@ class PubSubController(app_manager.RyuApp):
                     port
                 )
 
+        # Clear previous counter values so new flows
+        # are monitored from the beginning.
         self.last_counts.clear()
 
         self.class_counts_by_switch = {
@@ -1006,7 +1014,12 @@ class PubSubController(app_manager.RyuApp):
     # ---------------------------------------------------------
 
     def _monitor(self):
-        """Requests flow statistics every five seconds."""
+        """Requests flow statistics from every switch every five seconds."""
+
+        self.logger.info(
+            "Flow statistics monitoring started; interval=%d seconds",
+            MONITOR_INTERVAL
+        )
 
         while True:
 
@@ -1014,13 +1027,23 @@ class PubSubController(app_manager.RyuApp):
                 self.datapaths.values()
             ):
 
-                parser = datapath.ofproto_parser
+                try:
 
-                request = parser.OFPFlowStatsRequest(
-                    datapath
-                )
+                    parser = datapath.ofproto_parser
 
-                datapath.send_msg(request)
+                    request = parser.OFPFlowStatsRequest(
+                        datapath
+                    )
+
+                    datapath.send_msg(request)
+
+                except Exception as error:
+
+                    self.logger.error(
+                        "Could not request flow statistics from switch %d: %s",
+                        datapath.id,
+                        str(error)
+                    )
 
             hub.sleep(MONITOR_INTERVAL)
 
@@ -1029,18 +1052,21 @@ class PubSubController(app_manager.RyuApp):
         MAIN_DISPATCHER
     )
     def flow_stats_reply_handler(self, ev):
-        """Collects HIGH and NORMAL flow packet counters."""
+        """Collects HIGH and NORMAL flow counters and logs increases."""
 
         dpid = ev.msg.datapath.id
 
         high_count = 0
         normal_count = 0
+        matched_flows = 0
 
         for stat in ev.msg.body:
 
+            # Only inspect the HIGH and NORMAL priority rules.
             if stat.priority not in (100, 50):
                 continue
 
+            # Identify the TCP port field in the flow match.
             if "tcp_dst" in stat.match:
                 field = "tcp_dst"
 
@@ -1059,7 +1085,13 @@ class PubSubController(app_manager.RyuApp):
             if class_info is None:
                 continue
 
-            traffic_class = class_info[0]
+            traffic_class, expected_priority = class_info
+
+            # Ensure that the priority corresponds to the class.
+            if stat.priority != expected_priority:
+                continue
+
+            matched_flows += 1
 
             key = (
                 dpid,
@@ -1068,8 +1100,21 @@ class PubSubController(app_manager.RyuApp):
             )
 
             previous = self.last_counts.get(key, 0)
+            current = stat.packet_count
 
-            if stat.packet_count > previous:
+            # Calculate the number of newly observed packets.
+            # If a flow counter resets, treat its current value
+            # as the new packet increase.
+            if current > previous:
+                packet_increase = current - previous
+
+            elif current < previous:
+                packet_increase = current
+
+            else:
+                packet_increase = 0
+
+            if packet_increase > 0:
 
                 self.logger.info(
                     "CLASS=%s switch=%d %s=%d packets=%d (+%d)",
@@ -1077,32 +1122,36 @@ class PubSubController(app_manager.RyuApp):
                     dpid,
                     field,
                     tcp_port,
-                    stat.packet_count,
-                    stat.packet_count - previous
+                    current,
+                    packet_increase
                 )
 
-            self.last_counts[key] = stat.packet_count
+            self.last_counts[key] = current
 
             if traffic_class == "HIGH":
-                high_count += stat.packet_count
+                high_count += current
 
             elif traffic_class == "NORMAL":
-                normal_count += stat.packet_count
+                normal_count += current
 
-        self.class_counts_by_switch["HIGH"][dpid] = (
-            high_count
-        )
+        # Update the per-switch statistics.
+        self.class_counts_by_switch["HIGH"][dpid] = high_count
 
-        self.class_counts_by_switch["NORMAL"][dpid] = (
-            normal_count
-        )
+        self.class_counts_by_switch["NORMAL"][dpid] = normal_count
 
+        # Calculate totals across all switches.
         self.class_totals["HIGH"] = sum(
             self.class_counts_by_switch["HIGH"].values()
         )
 
         self.class_totals["NORMAL"] = sum(
             self.class_counts_by_switch["NORMAL"].values()
+        )
+
+        self.logger.debug(
+            "Statistics reply: switch=%d matched_class_flows=%d",
+            dpid,
+            matched_flows
         )
 
 
