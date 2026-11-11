@@ -34,11 +34,13 @@ def notify_controller(action, topic, client_ip):
         return
     def _send():
         try:
-            data = json.dumps({"action": action, "topic": topic, "client_ip": client_ip}).encode('utf-8')
+            # Agreed format requires "ip" instead of "client_ip"
+            data = json.dumps({"action": action, "topic": topic, "ip": client_ip}).encode('utf-8')
             req = urllib.request.Request(controller_url, data=data, headers={'Content-Type': 'application/json'}, method='POST')
             urllib.request.urlopen(req, timeout=1)
-        except Exception:
-            pass
+        except Exception as e:
+            # Explicitly log exception as required
+            print(f"[Controller Notify Error] Failed to send {action} for {topic}: {e}", file=sys.stderr)
     threading.Thread(target=_send, daemon=True).start()
 
 def client_sender(conn, q):
@@ -67,7 +69,6 @@ def handle_line(conn, addr, line):
         log_event("ERROR", "", client_ip)
         return
 
-    # Support both "type" and "action" keys (case-insensitive uppercase)
     raw_type = msg.get("type") or msg.get("action") or ""
     msg_type = raw_type.upper()
 
@@ -98,7 +99,7 @@ def handle_line(conn, addr, line):
 
     elif msg_type in ["PUBLISH", "publish"]:
         topic = msg.get("topic")
-        payload = msg.get("payload") or msg.get("message")
+        payload = msg.get("payload") or msg.get("message") or msg.get("content")
         ts = msg.get("ts", time.time())
 
         if not topic or payload is None:
