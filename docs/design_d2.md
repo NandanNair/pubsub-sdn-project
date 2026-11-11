@@ -87,7 +87,7 @@ The same run in `static` mode is the comparison: it should not recover.
 
 ## 7. Performance evaluation plan
 
-Tool: `tools/loadgen.py` (publishes N messages at a given rate from a host; records latency at the subscriber, throughput and loss; writes a CSV).
+Tool: `tools/experiments.py` (builds a fresh triangle per run, sets the controller mode through `POST /mode`, runs a probe publisher and subscriber per traffic class, and writes per-run CSVs, `results/d2/summary.csv`, `results/d2/aggregate.csv` and graphs in `results/d2/graphs/`). It replaced `tools/loadgen.py` for the measurements because it measures latency at the subscriber and loss per message.
 
 | Experiment | Conditions | Metrics |
 |---|---|---|
@@ -122,7 +122,54 @@ A web dashboard started with one command on the VM. It shows a live message feed
 
 Results are recorded in `tests/test_cases_d2.md` in the same format as D1.
 
-## 10. Ownership for D2
+## 10. Results
+
+All numbers are the mean over 3 runs; the spread (standard deviation) is in `results/d2/aggregate.csv` and the per-run values in `results/d2/summary.csv`. Latency is measured at the subscriber (receive time minus the publish time carried in the message; all Mininet hosts share the VM clock). "Loss" counts messages that had not arrived when the run ended.
+
+### 10.1 E1 vs E2: no failure (static baseline vs dynamic)
+
+Graph: `results/d2/graphs/e1_e2_rate_sweep.png`
+
+| Rate (msg/s) | Static mean / p95 (ms) | Dynamic mean / p95 (ms) | Loss (both) | Throughput (both) |
+|---|---|---|---|---|
+| 10 | 2.96 / 5.25 | 3.32 / 6.29 | 0% | 10 msg/s |
+| 50 | 14.51 / 54.84 | 3.86 / 8.02 | 0% | 50 msg/s |
+| 100 | 4.88 / 13.55 | 19.39 / 87.17 | 0% | 100 msg/s |
+| 200 | 6.74 / 29.79 | 6.70 / 30.47 | 0% | 200 msg/s |
+
+Without a failure both modes use the shortest path s1-s3, so they perform the same: every message is delivered, throughput matches the publish rate, and latency stays in single-digit milliseconds. The two higher values (static at 50 msg/s, dynamic at 100 msg/s) come from single slow runs and appear as large spreads, not as a trend. **Conclusion: the dynamic controller adds no measurable cost in normal operation.**
+
+### 10.2 E3: link s1-s3 fails at 20 s and returns at 40 s (the challenging scenario)
+
+Graphs: `results/d2/graphs/e3_failover.png`, `results/d2/graphs/e3_timeline.png`
+
+| | Dynamic | Static (baseline) |
+|---|---|---|
+| Longest delivery stall | **0.28 s** | **27.14 s** |
+| Delivery resumed while the link was still down | 3 of 3 runs | 0 of 3 runs |
+| Mean latency / p95 | 3.82 ms / 6.79 ms | 6,149 ms / 24,093 ms |
+| Messages lost | 0 | 0 |
+
+In dynamic mode the controller receives the port-status event, removes the failed link from its graph, and installs flows along s1-s2-s3. Messages are published every 0.1 s, so the 0.28 s stall means the outage lasted about 0.2 s, and latency is unchanged. In static mode the controller keeps the original path, so traffic to the broker is dropped until the link returns at 40 s. The stall (27 s) is longer than the 20 s outage because TCP retransmits with exponentially growing timeouts and only tries again some time after the link is back.
+
+Neither mode lost messages: TCP retransmits every segment, so an outage becomes **delay**, not loss. In static mode messages arrived up to 24 s late, which for an alerting system means the alerts are useless. This is why stall time and latency, not loss, are the right metrics for this comparison.
+
+### 10.3 E4: HIGH vs NORMAL under congestion
+
+Conditions: switch links limited to 1 Mbit/s, pub1 publishes HIGH (`alerts`, port 5001) and pub2 publishes NORMAL (`news`, port 5002) at the same time, 60 msg/s each with 1,000 bytes of padding (about 0.5 Mbit/s per class).
+
+**[To be completed after the controller fix is retested.]** In the first run both classes had the same latency (about 1.1 s) in both modes, so the class-based paths were not taking effect. The cause was found in the controller: flows installed for earlier ping traffic matched the pub/sub TCP traffic, so it never reached the controller's class-based path selection. The fix (protocol-specific L2 flows) is with Nithin, and E4 will be rerun. Expected result after the fix: in static mode both classes share s1-s3 (about 1.06 Mbit/s on a 1 Mbit/s link, congested); in dynamic mode HIGH uses s1-s3 and NORMAL uses s1-s2-s3, so neither class is congested. The earlier runs are kept in `results/d2/E4_overloaded_r100/` and `results/d2/E4_before_fix_r60/`.
+
+### 10.4 Summary
+
+| Requirement | Evidence |
+|---|---|
+| Dynamic rerouting on failure | E3: 0.28 s stall vs 27 s for the static baseline, 3 of 3 runs recovered |
+| No cost in normal operation | E1 vs E2: same loss, throughput and latency at 10 to 200 msg/s |
+| Loop-free forwarding | D2-1: `pingall` 0% dropped with the loop, no broadcast storm |
+| Prioritisation of HIGH | E4: pending rerun after the controller fix |
+
+## 11. Ownership for D2
 
 | Person | Owns |
 |---|---|
