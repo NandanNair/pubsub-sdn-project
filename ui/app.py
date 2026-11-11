@@ -131,10 +131,15 @@ def read_stats():
 
 # ------------------------------------------------------------------ failover runs
 def list_runs():
+    """Failover runs from tools/scenario.py (results/d2/<run>) and from
+    tools/experiments.py E3 (results/d2/E3/<run>), named like "E3/dynamic_r10_run1"."""
     runs = []
     for d in sorted(glob.glob(os.path.join(ARGS.results, "d2", "*"))):
         if os.path.isfile(os.path.join(d, "meta.json")):
             runs.append(os.path.basename(d))
+    for d in sorted(glob.glob(os.path.join(ARGS.results, "d2", "E3", "*"))):
+        if os.path.isfile(os.path.join(d, "meta.json")):
+            runs.append("E3/" + os.path.basename(d))
     return runs
 
 
@@ -157,13 +162,16 @@ def thin(points, cap=600):
 
 
 def read_run(name):
-    d = os.path.join(ARGS.results, "d2", os.path.basename(name))
+    if name not in list_runs():  # only known run folders, never an arbitrary path
+        return {"error": "run not found"}
+    d = os.path.join(ARGS.results, "d2", *name.split("/"))
     try:
         meta = json.load(open(os.path.join(d, "meta.json")))
     except (OSError, ValueError):
         return {"error": "run not found"}
-    pub = read_csv(os.path.join(d, "pub.csv"))
-    sub = read_csv(os.path.join(d, "sub.csv"))
+    # scenario.py writes pub.csv / sub.csv, experiments.py writes pub_HIGH.csv / sub_HIGH.csv
+    pub = read_csv(os.path.join(d, "pub.csv")) or read_csv(os.path.join(d, "pub_HIGH.csv"))
+    sub = read_csv(os.path.join(d, "sub.csv")) or read_csv(os.path.join(d, "sub_HIGH.csv"))
     send = {}
     for r in pub:
         try:
