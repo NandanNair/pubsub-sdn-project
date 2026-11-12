@@ -1,0 +1,7 @@
+Scenario: dynamic_failover   mode=dynamic   link s1-s3 down for 20 s
+Rate 10.0 msg/s, 600 messages sent, 0 received, 600 lost (100.0%)
+  lost seq numbers: 0-599
+Latency before failure : no messages
+Latency during failure : no messages
+Latency after restore  : no messages
+Longest delivery stall : no gap found around the failure window

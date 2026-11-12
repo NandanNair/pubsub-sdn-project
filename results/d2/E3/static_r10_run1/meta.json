@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "classes": [
+    "HIGH"
+  ],
+  "rate": 10,
+  "duration": 60,
+  "count": 600,
+  "bw": null,
+  "pad": 0,
+  "link": [
+    "s1",
+    "s3"
+  ],
+  "t_down": 1794500079.1248326,
+  "t_up": 1794500099.1279259,
+  "t0": 1794500059.1204164,
+  "experiment": "E3",
+  "run": 1
+}

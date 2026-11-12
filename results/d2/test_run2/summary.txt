@@ -1,0 +1,7 @@
+Scenario: test_run2   mode=static   link s1-s3 down for 10 s
+Rate 10.0 msg/s, 300 messages sent, 0 received, 300 lost (100.0%)
+  lost seq numbers: 0-299
+Latency before failure : no messages
+Latency during failure : no messages
+Latency after restore  : no messages
+Longest delivery stall : no gap found around the failure window

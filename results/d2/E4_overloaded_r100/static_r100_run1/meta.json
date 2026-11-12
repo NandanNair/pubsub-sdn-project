@@ -1,0 +1,18 @@
+{
+  "mode": "static",
+  "classes": [
+    "HIGH",
+    "NORMAL"
+  ],
+  "rate": 100,
+  "duration": 20,
+  "count": 2000,
+  "bw": 1.0,
+  "pad": 1000,
+  "link": null,
+  "t_down": null,
+  "t_up": null,
+  "t0": 1794412895.0867205,
+  "experiment": "E4",
+  "run": 1
+}

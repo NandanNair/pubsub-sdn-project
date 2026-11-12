@@ -112,8 +112,6 @@ What D2 adds:
 
 ### How to run D2
 
-Always restart Ryu before starting a new Mininet network (see Known issues).
-
 1. Clean up: `sudo mn -c` (never while Ryu is running).
 2. Terminal 1, start the controller with link discovery:
    ```
@@ -165,12 +163,8 @@ Then open http://localhost:8000 in Firefox. It shows the triangle with link stat
 
 ### Known issues
 
-These were found while testing and have been reported; see [`tests/test_cases_d2.md`](tests/test_cases_d2.md).
-- The controller only works for the first Mininet network after Ryu starts, so restart Ryu before each new network.
-- The controller's `static` mode still reroutes on a link failure, so it is not yet a valid no-rerouting baseline.
-- `POST /block` returns success but does not drop the host's traffic yet.
-- The broker sends `client_ip` instead of `ip` to `POST /subscription`, so `GET /subscriptions` stays empty.
-- The D1 clients (`clients/`, `tests/pub.sh`) do not end messages with a newline and the publisher sends `content`, which the D2 broker does not accept. The probes in `tools/experiments.py` use the D2 format.
+- There is no `POST /unblock`: a host blocked with `POST /block` stays blocked until Ryu is restarted.
+- `sudo mn -c` must not be run while Ryu is running.
 
 ## Tests
 
@@ -188,5 +182,5 @@ All D1 test cases, with procedure, expected and actual results, are in [`tests/t
 
 - **D1** (basic end-to-end system with SDN traffic classification): complete.
 - **D2** (in progress):
-  - Done and tested: triangle topology, loop-free forwarding (no broadcast storm), controller REST API, broker send queues and event log, the broker working when the controller is unreachable, and rerouting on link failure (600 of 600 messages delivered with about 0.3 s outage).
-  - In progress: static baseline mode, HIGH-class prioritisation, blocking, the broker's subscription notification, full performance evaluation (E1 to E4) and results write-up.
+  - Done and tested: triangle topology, loop-free forwarding (no broadcast storm), controller REST API, broker-to-controller subscriptions, broker send queues and event log, rerouting on link failure, class-based paths for HIGH and NORMAL, blocking a host, and the performance evaluation E1 to E4 against a static baseline.
+  - Key results: after a link failure delivery resumes in 0.38 s with rerouting vs 27.5 s without; under congestion HIGH latency is 11 ms with class-based paths vs 1.44 s on a shared path. Details in [`docs/design_d2.md`](docs/design_d2.md) section 10.

@@ -145,29 +145,47 @@ Graphs: `results/d2/graphs/e3_failover.png`, `results/d2/graphs/e3_timeline.png`
 
 | | Dynamic | Static (baseline) |
 |---|---|---|
-| Longest delivery stall | **0.28 s** | **27.14 s** |
+| Longest delivery stall | **0.38 s** | **27.46 s** |
 | Delivery resumed while the link was still down | 3 of 3 runs | 0 of 3 runs |
-| Mean latency / p95 | 3.82 ms / 6.79 ms | 6,149 ms / 24,093 ms |
+| Mean latency / p95 | 6.96 ms / 18.97 ms | 6,309 ms / 24,410 ms |
 | Messages lost | 0 | 0 |
 
-In dynamic mode the controller receives the port-status event, removes the failed link from its graph, and installs flows along s1-s2-s3. Messages are published every 0.1 s, so the 0.28 s stall means the outage lasted about 0.2 s, and latency is unchanged. In static mode the controller keeps the original path, so traffic to the broker is dropped until the link returns at 40 s. The stall (27 s) is longer than the 20 s outage because TCP retransmits with exponentially growing timeouts and only tries again some time after the link is back.
+In dynamic mode the controller receives the port-status event, removes the failed link from its graph, and installs flows along s1-s2-s3. Messages are published every 0.1 s, so the 0.38 s stall means the outage lasted about 0.3 s, and latency stays in milliseconds. In static mode the controller keeps the original path, so traffic to the broker is dropped until the link returns at 40 s. The stall (27.5 s) is longer than the 20 s outage because TCP retransmits with exponentially growing timeouts and only tries again some time after the link is back.
 
-Neither mode lost messages: TCP retransmits every segment, so an outage becomes **delay**, not loss. In static mode messages arrived up to 24 s late, which for an alerting system means the alerts are useless. This is why stall time and latency, not loss, are the right metrics for this comparison.
+Run 1 of each mode was repeated after the final controller update and gave the same behaviour (dynamic: 600/600 delivered, mean 12.3 ms; static: 600/600, mean 6,519 ms), so the averages above combine runs from both controller versions.
+
+Neither mode lost messages: TCP retransmits every segment, so an outage becomes **delay**, not loss. In static mode messages arrived up to 24 s late (p95), which for an alerting system means the alerts are useless. This is why stall time and latency, not loss, are the right metrics for this comparison.
 
 ### 10.3 E4: HIGH vs NORMAL under congestion
 
 Conditions: switch links limited to 1 Mbit/s, pub1 publishes HIGH (`alerts`, port 5001) and pub2 publishes NORMAL (`news`, port 5002) at the same time, 60 msg/s each with 1,000 bytes of padding (about 0.5 Mbit/s per class).
 
-**[To be completed after the controller fix is retested.]** In the first run both classes had the same latency (about 1.1 s) in both modes, so the class-based paths were not taking effect. The cause was found in the controller: flows installed for earlier ping traffic matched the pub/sub TCP traffic, so it never reached the controller's class-based path selection. The fix (protocol-specific L2 flows) is with Nithin, and E4 will be rerun. Expected result after the fix: in static mode both classes share s1-s3 (about 1.06 Mbit/s on a 1 Mbit/s link, congested); in dynamic mode HIGH uses s1-s3 and NORMAL uses s1-s2-s3, so neither class is congested. The earlier runs are kept in `results/d2/E4_overloaded_r100/` and `results/d2/E4_before_fix_r60/`.
+Graph: `results/d2/graphs/e4_priority.png`
+
+| | Dynamic: HIGH | Dynamic: NORMAL | Static: HIGH | Static: NORMAL |
+|---|---|---|---|---|
+| Path (s1 to broker) | s1-s3 | s1-s2-s3 | s1-s3 | s1-s3 |
+| Mean latency | **10.88 ms** | **11.62 ms** | 1,442.81 ms | 677.13 ms |
+| p95 latency | 50.89 ms | 56.37 ms | 2,965.29 ms | 1,234.98 ms |
+| Delivered throughput | 60.0 msg/s | 60.0 msg/s | 52.4 msg/s | 56.9 msg/s |
+| Not delivered at end of run | 0% | 0% | 1.03% | 0% |
+
+In static mode both classes share the s1-s3 link, about 1.06 Mbit/s offered on a 1 Mbit/s link, so its queue keeps growing: latency reaches seconds and throughput falls below the publish rate. In dynamic mode the controller matches the TCP port (5001 or 5002) and sends HIGH on the direct s1-s3 path and NORMAL on s1-s2-s3, so each class has a link of its own and neither is congested: **HIGH latency drops from 1.44 s to 11 ms (about 130 times lower)** and every message is delivered at the full rate.
+
+In dynamic mode HIGH is only slightly faster than NORMAL (10.9 vs 11.6 ms), because once the classes are separated neither link is congested; HIGH's advantage is that it gets the direct, shorter path. In static mode NORMAL happened to be faster than HIGH, which shows that flow priority alone (100 vs 50) does not protect HIGH traffic on a congested link; it only decides which rule matches. The separate paths are what protect it.
+
+The first attempt at E4 (100 msg/s each, `results/d2/E4_overloaded_r100/`) overloaded even the separate paths, and the second (`results/d2/E4_before_fix_r60/`) showed no difference because flows installed for earlier ping traffic caught the pub/sub TCP traffic before it reached the class-based path selection. Both are kept for reference; the controller was fixed and E4 was rerun.
 
 ### 10.4 Summary
 
 | Requirement | Evidence |
 |---|---|
-| Dynamic rerouting on failure | E3: 0.28 s stall vs 27 s for the static baseline, 3 of 3 runs recovered |
+| Dynamic rerouting on failure | E3: 0.38 s stall vs 27.5 s for the static baseline, 3 of 3 runs recovered |
 | No cost in normal operation | E1 vs E2: same loss, throughput and latency at 10 to 200 msg/s |
 | Loop-free forwarding | D2-1: `pingall` 0% dropped with the loop, no broadcast storm |
-| Prioritisation of HIGH | E4: pending rerun after the controller fix |
+| Prioritisation of HIGH | E4: HIGH latency 11 ms on its own path vs 1.44 s on the shared path in static mode |
+| Application-aware network (Socket-SDN integration) | D2-3: broker subscriptions appear in the controller (`GET /subscriptions`) |
+| Blocking a host | D2-10: blocked host 100% ping loss, others unaffected |
 
 ## 11. Ownership for D2
 

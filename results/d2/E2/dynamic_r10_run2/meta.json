@@ -1,0 +1,17 @@
+{
+  "mode": "dynamic",
+  "classes": [
+    "HIGH"
+  ],
+  "rate": 10,
+  "duration": 20,
+  "count": 200,
+  "bw": null,
+  "pad": 0,
+  "link": null,
+  "t_down": null,
+  "t_up": null,
+  "t0": 1794412035.2052925,
+  "experiment": "E2",
+  "run": 2
+}
