@@ -103,7 +103,16 @@ Tool: `tools/experiments.py` (builds a fresh triangle per run, sets the controll
 
 ## 8. Demo UI
 
-A web dashboard started with one command on the VM. It shows a live message feed (from `results/events.jsonl`), per-class counters and link status (from `GET /stats`), a topology view, and buttons for the demo (start broker, add subscriber, publish, fail or restore a link). It runs Mininet in the same process so the buttons can run commands on hosts. Details to be added when the UI is started.
+`ui/app.py` is a web dashboard started with one command on the VM (`python3 ui/app.py`, then http://localhost:8000). It uses only the Python standard library and runs separately from Mininet and Ryu, so it never interferes with them; the demo commands themselves are typed at the `mininet>` prompt. The page polls the controller every 1.5 s and the event log every second, and has four panels:
+
+| Panel | Source | Shows |
+|---|---|---|
+| Network | `GET /stats` (`links`) | The triangle with each switch link green (up) or red dashed (down), so a `link s1 s3 down` is visible within about 2 seconds |
+| Traffic classes | `GET /stats` (`classes`, `mode`) | HIGH and NORMAL packet counts and rates, the controller mode and the link list |
+| Message feed | `results/events.jsonl` (broker event log) | Connects, subscriptions, publishes (with how many subscribers each was delivered to) and disconnects, newest first |
+| Failover run | `results/d2/E3/*` and `results/d2/<run>/` | The latency of every message in a link-failure run against time, with the link-down period shaded, and a one-line summary (delivered, longest gap, mean latency) |
+
+If the controller is not running, the page shows "controller: not reachable" and the other panels keep working.
 
 ## 9. D2 test cases
 
