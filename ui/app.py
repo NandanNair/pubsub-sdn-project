@@ -178,10 +178,13 @@ def read_run(name):
             send[int(r["seq"])] = float(r["send_ts"])
         except (KeyError, ValueError):
             pass
-    got = {}
+    got, recv_ts = {}, {}
     for r in sub:
         try:
-            got.setdefault(int(r["seq"]), float(r["latency_ms"]))
+            seq = int(r["seq"])
+            got.setdefault(seq, float(r["latency_ms"]))
+            if r.get("recv_ts"):
+                recv_ts.setdefault(seq, float(r["recv_ts"]))
         except (KeyError, ValueError):
             pass
     t0 = min(send.values()) if send else meta.get("t0", 0)
@@ -191,7 +194,16 @@ def read_run(name):
     try:
         summary = open(os.path.join(d, "summary.txt")).read()
     except OSError:
-        pass
+        # experiments.py runs have no summary.txt: describe the run from the CSVs
+        stall = 0.0
+        times = sorted(v for v in recv_ts.values())
+        for prev, cur in zip(times, times[1:]):
+            if cur > meta["t_down"] and prev < meta["t_up"]:
+                stall = max(stall, cur - prev)
+        lats = sorted(got.values())
+        mean = sum(lats) / len(lats) if lats else 0
+        summary = (f"mode {meta.get('mode')}: {len(got)} of {len(send)} messages delivered, "
+                   f"longest delivery gap {stall:.2f} s, mean latency {mean:.1f} ms")
     return {
         "name": name, "mode": meta.get("mode"), "summary": summary,
         "t_down": round(meta["t_down"] - t0, 3), "t_up": round(meta["t_up"] - t0, 3),
@@ -312,7 +324,7 @@ function normaliseLinks(data) {
   const out = {};
   const list = Array.isArray(data.links) ? data.links : [];
   for (const l of list) {
-    const a = l.a || l.src || l.from, b = l.b || l.dst || l.to;
+    const a = l.a || l.src || l.source || l.from, b = l.b || l.dst || l.destination || l.to;
     if (!a || !b) continue;
     let up = l.up;
     if (up === undefined && l.state !== undefined) up = String(l.state).toLowerCase() === "up";
@@ -364,7 +376,7 @@ async function pollStats() {
   if (!names.length) { box.innerHTML = '<div class="empty">no class counters in /stats yet</div>'; return; }
   box.replaceChildren();
   for (const n of names) {
-    const pk = Number((classes[n] || {}).packets || 0);
+    const v = classes[n]; const pk = Number(typeof v === "object" && v !== null ? (v.packets || 0) : (v || 0));
     const rate = lastT && lastCls[n] !== undefined ? Math.max(0, (pk - lastCls[n]) / (now - lastT)) : 0;
     const c = document.createElement("div"); c.className = "cls " + n;
     c.innerHTML = "<b>" + n + "</b><span class='n'>" + pk.toLocaleString() + "</span><span class='r'>packets &middot; " + rate.toFixed(1) + "/s</span>";
