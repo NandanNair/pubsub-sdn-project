@@ -4,6 +4,8 @@ Computer Networks (UE25CS243A) mini project, Project 9.
 
 A topic-based publish-subscribe system built with raw TCP sockets (Python) and run on a Mininet network whose switch is controlled by a Ryu (OpenFlow 1.3) SDN controller. The controller classifies pub/sub traffic by TCP port and installs flow rules accordingly.
 
+Team: Nandan Nair, Prakul N.R, Nithin. Who did what is in [`CONTRIBUTIONS.md`](CONTRIBUTIONS.md).
+
 ## Architecture
 
 ```
