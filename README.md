@@ -163,6 +163,76 @@ python3 ui/app.py
 ```
 Then open http://localhost:8000 in Firefox. It shows the triangle with link status, the HIGH / NORMAL counters from `GET /stats`, the live message feed from `results/events.jsonl`, and the latency chart of any failover run in `results/d2/`.
 
+### Live demo (about 5 minutes)
+
+Use three terminals. Commands after `mininet>` are typed at the Mininet prompt, without the `mininet>` itself.
+
+**Setup**
+```
+# Terminal 1: controller
+sudo mn -c
+source ~/ryu-env/bin/activate
+cd ~/pubsub-sdn-project
+ryu-manager --observe-links controller/app.py
+
+# Terminal 3: dashboard (normal terminal, not the mininet prompt)
+cd ~/pubsub-sdn-project
+python3 ui/app.py
+#   then open http://localhost:8000 in Firefox
+
+# Terminal 2: network (wait about 10 s after the prompt appears)
+cd ~/pubsub-sdn-project
+sudo python3 topology/topo_triangle.py --skip-ping
+```
+
+**1. Loop-free triangle**
+```
+mininet> pingall
+```
+Expect `0% dropped`, and all three switch links green on the dashboard.
+
+**2. Broker, subscribers and the controller knowing about them**
+```
+mininet> broker python3 broker/broker.py --controller=http://10.0.0.254:8080/subscription &
+mininet> broker python3 broker/broker.py 5002 --controller=http://10.0.0.254:8080/subscription &
+mininet> sub1 python3 tools/experiments.py sub 10.0.0.3 alerts --port 5001 --out /tmp/sub1.csv &
+mininet> sub2 python3 tools/experiments.py sub 10.0.0.3 news --port 5002 --out /tmp/sub2.csv &
+mininet> pub1 curl -s http://10.0.0.254:8080/subscriptions
+```
+Expect `alerts` listing 10.0.0.4 and `news` listing 10.0.0.5: the brokers told the controller about the subscriptions over REST.
+
+**3. Link failure while messages flow (the main scenario)**
+```
+mininet> pub1 python3 tools/experiments.py pub 10.0.0.3 alerts --port 5001 --rate 10 --count 600 --out /tmp/pub1.csv &
+mininet> link s1 s3 down
+```
+On the dashboard: s1-s3 turns red and the message feed keeps scrolling (traffic now goes s1-s2-s3).
+```
+mininet> link s1 s3 up
+mininet> sub1 tail -n 3 /tmp/sub1.csv
+```
+The last column is the latency of each message in ms. Then, in the dashboard's **Failover run** panel, show `E3/static_r10_run1` (delivery stops for about 27 s) next to `E3/dynamic_r10_run1` (about 0.4 s).
+
+**4. HIGH vs NORMAL**
+```
+mininet> pub2 python3 tools/experiments.py pub 10.0.0.3 news --port 5002 --rate 10 --count 100 --out /tmp/pub2.csv &
+mininet> pub1 curl -s http://10.0.0.254:8080/stats
+```
+The dashboard's HIGH and NORMAL counters both increase. Open `results/d2/graphs/e4_priority.png` for the measured result: HIGH latency 11 ms on its own path vs 1.44 s on a shared path.
+
+**5. Blocking a host (do this last: there is no unblock)**
+```
+mininet> pub2 ping -c 2 10.0.0.3
+mininet> pub1 curl -s -X POST -d '{"ip": "10.0.0.2"}' http://10.0.0.254:8080/block
+mininet> pub2 ping -c 2 10.0.0.3
+mininet> pub1 ping -c 2 10.0.0.3
+```
+Expect pub2 0% loss before, 100% loss after, and pub1 unaffected.
+
+**Results to show:** the graphs in `results/d2/graphs/`, and section 10 of `docs/design_d2.md`.
+
+**Shut down:** `exit` at `mininet>`, then Ctrl+C in Terminals 1 and 3.
+
 ### Known issues
 
 - There is no `POST /unblock`: a host blocked with `POST /block` stays blocked until Ryu is restarted.
